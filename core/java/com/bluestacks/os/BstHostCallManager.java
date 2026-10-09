@@ -102,6 +102,20 @@ public class BstHostCallManager {
     }
 
     /**
+     * Notify the host that the windowing mode of the given package changed
+     * (1 = fullscreen, 5 = freeform).
+     * @hide
+     */
+    public int onWindowingModeChanged(String pkg, int windowingMode) {
+        if (pkg == null) throw new IllegalArgumentException("pkg is null");
+        try {
+            return mBstHostCallService.onWindowingModeChanged(pkg, windowingMode);
+        } catch (RemoteException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
      * @hide
      */
     public int exportFiles(String folder) {

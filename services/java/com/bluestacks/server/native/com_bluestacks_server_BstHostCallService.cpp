@@ -195,6 +195,24 @@ static jint onActivityDisplayed(JNIEnv* env, jobject clazz, jstring pkgStr, jstr
     return 0;
 }
 
+static jint onWindowingModeChanged(JNIEnv* env, jobject clazz, jstring pkgStr, jint windowingMode) {
+    if (dbg) ALOGD("%s: called", __func__);
+    string pkg = getStringFromJstring(env, clazz, pkgStr);
+
+    if (pkg.empty()) return -1;
+
+    if (dbg) ALOGD("%s: package = %s, windowingMode = %d", __func__, pkg.c_str(), windowingMode);
+    xthrPoolAddTask(&g_thr_pool.threadPool, [=]
+        {
+            xerr_t rval = hcallOnWindowingModeChangedRpc(pkg.c_str(), windowingMode);
+            if (rval != XERR_SUCCESS) {
+                ALOGE("RPC failed for %s, error %d",__func__, rval);
+            }
+            if (dbg) ALOGD("%s: returning, rval = %d", __func__, rval);
+        });
+    return 0;
+}
+
 static jint exportFiles(JNIEnv* env, jobject clazz, jstring folderStr) {
     if (dbg) ALOGD("%s: called", __func__);
     string folder = getStringFromJstring(env, clazz, folderStr);
@@ -989,6 +1007,7 @@ static const JNINativeMethod gMethods[] = {
     { "native_onImeChange", "(Ljava/lang/String;)I", (void *)onImeChanged },
     { "native_onTextEditModeChange", "(Z)I", (void *)onTextEditModeChanged },
     { "native_onActivityDisplayed", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I", (void *)onActivityDisplayed },
+    { "native_onWindowingModeChanged", "(Ljava/lang/String;I)I", (void *)onWindowingModeChanged },
     { "native_exportFiles", "(Ljava/lang/String;)I", (void *)exportFiles},
     { "native_startImportFiles", "(Ljava/lang/String;Z)I", (void *)startImportFiles},
     { "native_startExportFiles", "()I", (void *)startExportFiles},

@@ -7141,6 +7141,55 @@ public class WindowManagerService extends IWindowManager.Stub
         }
     }
 
+    // BS-A16: tell the host whether the foreground app is fullscreen (1) or
+    // freeform (5). Sent when an activity is displayed and whenever the task
+    // windowing settles to a new value (desk transitions start undefined).
+    // Deduplicated via a system property because same-package windowing
+    // changes must not be swallowed by the top-displayed-package check.
+    private void bstNotifyWindowingModeChanged(
+            BstHostCallManager hostCall, ActivityRecord activityRecord, String reason) {
+        try {
+            if (activityRecord == null || activityRecord.getTask() == null) {
+                return;
+            }
+            final String pkg = activityRecord.packageName;
+            final int mode = activityRecord.getTask().getWindowingMode();
+            final String key = pkg + ":" + mode;
+            final String last = SystemProperties.get("bst.r259.last_windowing", "");
+            if (key.equals(last)) {
+                return;
+            }
+            SystemProperties.set("bst.r259.last_windowing", key);
+            Slog.w(TAG, "R259 windowingModeChanged pkg=" + pkg
+                    + " mode=" + mode + " reason=" + reason);
+            hostCall.onWindowingModeChanged(pkg, mode);
+        } catch (Exception e) {
+            Slog.w(TAG, "R259 bstNotifyWindowingModeChanged failed: " + e);
+        }
+    }
+
+    // BS-A16: called from Task when its windowing settles; only notifies
+    // when the task's activity is the current foreground (mirrors the
+    // displayed-path dedup via the same property key).
+    void bstNotifyWindowingModeChangedIfCurrent(Task task) {
+        final ActivityRecord top = task != null ? task.topRunningActivity() : null;
+        if (top == null) {
+            return;
+        }
+        BstHostCallManager hostCall = mBstHostCallManagerService;
+        if (hostCall == null) {
+            try {
+                hostCall = (BstHostCallManager) mContext.getSystemService(Context.BST_HOST_CALL);
+            } catch (RuntimeException e) {
+                return;
+            }
+        }
+        if (hostCall == null) {
+            return;
+        }
+        bstNotifyWindowingModeChanged(hostCall, top, "settled");
+    }
+
     void bstNotifyActivityDisplayed(ActivityRecord activityRecord) {
         bstNotifyActivityDisplayed(activityRecord, null);
     }
@@ -7209,6 +7258,7 @@ public class WindowManagerService extends IWindowManager.Stub
             if (rval != 0) {
                 Slog.w(TAG, "R259 onActivityDisplayed rval=" + rval);
             }
+            bstNotifyWindowingModeChanged(hostCall, activityRecord, "displayed");
 
             // P2 BatchC: app-config (fail-open)
             try {

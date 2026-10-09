@@ -9,6 +9,7 @@ interface IBstHostCallService {
     int onImeChange(String imeName);
     int onTextEditModeChange(boolean isTextEditMode);
     int onActivityDisplayed(String pkg, String activity, String callingPackage);
+    int onWindowingModeChanged(String pkg, int windowingMode);
     int exportFiles(String folder);
     int startImportFiles(String type, boolean isMultipleAllowed);
     int startExportFiles();

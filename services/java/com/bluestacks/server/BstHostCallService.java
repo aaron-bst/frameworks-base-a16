@@ -97,6 +97,12 @@ public class BstHostCallService extends IBstHostCallService.Stub {
         return native_onActivityDisplayed(pkg, activity, callingPackage);
     }
 
+    public int onWindowingModeChanged(String pkg, int windowingMode) {
+        if (DBG) Slog.d(TAG, "in BstHostCallService onWindowingModeChanged, package: "
+                + pkg + " windowingMode: " + windowingMode);
+        return native_onWindowingModeChanged(pkg, windowingMode);
+    }
+
     /**
      * @hide
      */
@@ -483,6 +489,7 @@ public class BstHostCallService extends IBstHostCallService.Stub {
     private static native int native_onImeChange(String imeName);
     private static native int native_onTextEditModeChange(boolean isTextEditMode);
     private static native int native_onActivityDisplayed(String pkg, String activity, String callingPackage);
+    private static native int native_onWindowingModeChanged(String pkg, int windowingMode);
     private static native int native_exportFiles(String folder);
     private static native int native_startImportFiles(String type, boolean isMultipleAllowed);
     private static native int native_startExportFiles();
