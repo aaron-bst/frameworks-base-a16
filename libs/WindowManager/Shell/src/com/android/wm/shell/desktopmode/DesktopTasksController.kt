@@ -4114,6 +4114,7 @@ class DesktopTasksController(
             }
 
         val isKnownDesktopTask = repository.isActiveTask(task.taskId)
+        val isMinimizedDesktopTask = repository.isMinimizedTask(task.taskId)
         val bringTaskToFront = sourceDisplayId != targetDisplayId || requestedTaskBounds == null
         val shouldForceEnterDesktop =
             shouldForceEnterDesktopByDesktopFirstPolicy(task, requestType, targetDisplayId)
@@ -4121,8 +4122,8 @@ class DesktopTasksController(
         logV(
             "handleFreeformTaskPlacement taskId=%d sourceDisplayId=%d targetDisplayId=%d" +
                 " sourceDeskId=%d targetDeskId=%d anyDeskActive=%b isKnownDesktopTask=%b" +
-                " bringTaskToFront=%b shouldForceEnterDesktop=%b requestedTaskBounds=%s" +
-                " suggestedTargetDeskId=%d requestType=%s",
+                " isMinimizedDesktopTask=%b bringTaskToFront=%b shouldForceEnterDesktop=%b" +
+                " requestedTaskBounds=%s suggestedTargetDeskId=%d requestType=%s",
             task.taskId,
             sourceDisplayId,
             targetDisplayId,
@@ -4130,6 +4131,7 @@ class DesktopTasksController(
             targetDeskId,
             anyDeskActive,
             isKnownDesktopTask,
+            isMinimizedDesktopTask,
             bringTaskToFront,
             shouldForceEnterDesktop,
             requestedTaskBounds,
@@ -4145,6 +4147,13 @@ class DesktopTasksController(
                 // If there is an active desk on the target display, then it is already in desktop
                 // windowing so the new task should also be placed in desktop windowing.
                 anyDeskActive -> true
+                // Narrow exception: unminimize/relaunch of a minimized desktop task must
+                // re-activate the desk. Minimizing the last visible window clears visibleTasks so
+                // isAnyDeskActive becomes false; without this, AOSP's "known task → fullscreen"
+                // branch drops the task out of desktop (no caption min/max buttons).
+                // Do NOT gate other freeform launches on bst.freeform_launch here — that would
+                // bypass normal desktop-first / fullscreen fallback for non-minimize starts.
+                isMinimizedDesktopTask -> true
                 DesktopExperienceFlags.ENABLE_DESKTOP_FIRST_TOP_FULLSCREEN_BUGFIX.isTrue ||
                     DesktopExperienceFlags.ENABLE_DESKTOP_FIRST_POLICY_IN_LPM.isTrue ->
                     // Here we have no desk activated, but check if we really want to force a task
@@ -4433,8 +4442,16 @@ class DesktopTasksController(
         return null
     }
 
-    private fun shouldFreeformTaskLaunchSwitchToFullscreen(task: RunningTaskInfo): Boolean =
-        !isAnyDeskActive(task.displayId, task.userId)
+    private fun shouldFreeformTaskLaunchSwitchToFullscreen(task: RunningTaskInfo): Boolean {
+        // Only exempt minimized tasks: after the last visible window is minimized the desk looks
+        // inactive, but unminimize must not be treated as "leave desktop → fullscreen".
+        // Other freeform launches keep the AOSP desk-inactive → fullscreen fallback.
+        val repository = userRepositories.getProfile(task.userId)
+        if (repository.isMinimizedTask(task.taskId)) {
+            return false
+        }
+        return !isAnyDeskActive(task.displayId, task.userId)
+    }
 
     private fun shouldFullscreenTaskLaunchSwitchToDesktop(
         task: RunningTaskInfo,

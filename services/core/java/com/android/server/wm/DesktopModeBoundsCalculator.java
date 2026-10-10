@@ -98,6 +98,9 @@ public final class DesktopModeBoundsCalculator {
 
         if (options != null && options.getLaunchBounds() != null
                 && !updateOptionBoundsSize) {
+            // Always inherit caller-provided launchBounds. Do not replace them with
+            // calculateInitialBounds — that would override a legitimate geometry request.
+            // Size overflow is corrected below by shrinking into stable (not by ignoring options).
             outParams.mBounds.set(options.getLaunchBounds());
             logger.accept("inherit-from-options=" + outParams.mBounds);
         } else if (layout != null) {
@@ -125,11 +128,54 @@ public final class DesktopModeBoundsCalculator {
             logger.accept("respecting option bounds cascaded position="
                     + shouldRespectOptionPosition);
         }
+        if (!outParams.mBounds.isEmpty()) {
+            final Rect beforeClamp = new Rect(outParams.mBounds);
+            fitBoundsInsideStableBounds(outParams.mBounds, stableBounds);
+            if (!beforeClamp.equals(outParams.mBounds)) {
+                logger.accept("clamped-bounds-inside-stable from=" + beforeClamp
+                        + " to=" + outParams.mBounds + " stable=" + stableBounds);
+            }
+        }
         if (captionHeight != 0) {
             outParams.mAppBounds.set(outParams.mBounds);
             outParams.mAppBounds.top += captionHeight;
             logger.accept("exclude-caption-height-from-app-bounds");
         }
+    }
+
+    /**
+     * Shrinks {@code bounds} when larger than {@code stableBounds}. Only then offsets to lie
+     * fully inside stable — windows that already fit in size but sit partly off-edge are left
+     * alone (user placement). Used to fix launchBounds that cannot be shown on this display.
+     */
+    static void fitBoundsInsideStableBounds(@NonNull Rect bounds, @NonNull Rect stableBounds) {
+        if (stableBounds.isEmpty()) {
+            return;
+        }
+        final boolean oversized = bounds.width() > stableBounds.width()
+                || bounds.height() > stableBounds.height();
+        if (!oversized) {
+            return;
+        }
+        if (bounds.width() > stableBounds.width()) {
+            bounds.right = bounds.left + stableBounds.width();
+        }
+        if (bounds.height() > stableBounds.height()) {
+            bounds.bottom = bounds.top + stableBounds.height();
+        }
+        int dx = 0;
+        int dy = 0;
+        if (bounds.left < stableBounds.left) {
+            dx = stableBounds.left - bounds.left;
+        } else if (bounds.right > stableBounds.right) {
+            dx = stableBounds.right - bounds.right;
+        }
+        if (bounds.top < stableBounds.top) {
+            dy = stableBounds.top - bounds.top;
+        } else if (bounds.bottom > stableBounds.bottom) {
+            dy = stableBounds.bottom - bounds.bottom;
+        }
+        bounds.offset(dx, dy);
     }
 
     /**

@@ -717,7 +717,6 @@ class DesktopRepository(
     fun getMinimizedTasks(displayId: Int): ArraySet<Int> =
         ArraySet(desktopData.getActiveDesk(displayId)?.minimizedTasks)
 
-    @VisibleForTesting
     fun getMinimizedTaskIdsInDesk(deskId: Int): ArraySet<Int> =
         ArraySet(desktopData.getDesk(deskId)?.minimizedTasks)
 
