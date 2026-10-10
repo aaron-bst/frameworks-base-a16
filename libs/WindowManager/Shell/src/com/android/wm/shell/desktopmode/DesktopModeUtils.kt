@@ -43,16 +43,18 @@ import android.window.DesktopExperienceFlags
 import android.window.DesktopModeFlags
 import android.window.SplashScreen.SPLASH_SCREEN_STYLE_ICON
 import com.android.internal.policy.DesktopModeCompatUtils
+import com.android.internal.protolog.ProtoLog
 import com.android.wm.shell.ShellTaskOrganizer
 import com.android.wm.shell.common.DisplayController
 import com.android.wm.shell.common.DisplayLayout
 import com.android.wm.shell.desktopmode.data.DesktopRepository
 import com.android.wm.shell.desktopmode.data.DesktopRepository.Companion.INVALID_DESK_ID
 import com.android.wm.shell.desktopmode.multidesks.DesksOrganizer
+import com.android.wm.shell.protolog.ShellProtoLogGroup.WM_SHELL_DESKTOP_MODE
 import com.android.wm.shell.recents.RecentTasksController
 import kotlin.math.ceil
-import kotlin.math.max
-import kotlin.math.min
+
+private const val PLACEMENT_BOUNDS_TAG = "decideDesktopTaskPlacementBounds"
 
 @JvmField
 val DESKTOP_MODE_INITIAL_BOUNDS_SCALE: Float =
@@ -63,12 +65,53 @@ val DESKTOP_MODE_LANDSCAPE_APP_PADDING: Int =
 
 /** Calculates the initial bounds to enter desktop, centered on the display. */
 fun calculateDefaultDesktopTaskBounds(displayLayout: DisplayLayout): Rect {
-    // TODO(b/319819547): Account for app constraints so apps do not become letterboxed
-    val desiredWidth = (displayLayout.width() * DESKTOP_MODE_INITIAL_BOUNDS_SCALE).toInt()
-    val desiredHeight = (displayLayout.height() * DESKTOP_MODE_INITIAL_BOUNDS_SCALE).toInt()
-    val heightOffset = (displayLayout.height() - desiredHeight) / 2
-    val widthOffset = (displayLayout.width() - desiredWidth) / 2
-    return Rect(widthOffset, heightOffset, desiredWidth + widthOffset, desiredHeight + heightOffset)
+    val stableBounds = Rect().also { displayLayout.getStableBoundsForDesktopMode(it) }
+    val desiredWidth = (stableBounds.width() * DESKTOP_MODE_INITIAL_BOUNDS_SCALE).toInt()
+    val desiredHeight = (stableBounds.height() * DESKTOP_MODE_INITIAL_BOUNDS_SCALE).toInt()
+    return positionInScreen(Size(desiredWidth, desiredHeight), stableBounds).also {
+        fitBoundsInsideStableBounds(it, stableBounds)
+    }
+}
+
+/**
+ * Shrinks [bounds] when larger than [stableBounds]. Only then offsets fully inside stable.
+ * Windows that already fit in size but sit partly outside (user drag / intentional overlap)
+ * are not moved.
+ */
+fun fitBoundsInsideStableBounds(bounds: Rect, stableBounds: Rect) {
+    if (stableBounds.isEmpty) return
+    val oversized =
+        bounds.width() > stableBounds.width() || bounds.height() > stableBounds.height()
+    if (!oversized) return
+    val before = Rect(bounds)
+    if (bounds.width() > stableBounds.width()) {
+        bounds.right = bounds.left + stableBounds.width()
+    }
+    if (bounds.height() > stableBounds.height()) {
+        bounds.bottom = bounds.top + stableBounds.height()
+    }
+    var dx = 0
+    var dy = 0
+    if (bounds.left < stableBounds.left) {
+        dx = stableBounds.left - bounds.left
+    } else if (bounds.right > stableBounds.right) {
+        dx = stableBounds.right - bounds.right
+    }
+    if (bounds.top < stableBounds.top) {
+        dy = stableBounds.top - bounds.top
+    } else if (bounds.bottom > stableBounds.bottom) {
+        dy = stableBounds.bottom - bounds.bottom
+    }
+    bounds.offset(dx, dy)
+    if (before != bounds) {
+        ProtoLog.v(
+            WM_SHELL_DESKTOP_MODE,
+            "fitBoundsInsideStableBounds: clamped from=%s to=%s stable=%s",
+            before,
+            bounds,
+            stableBounds,
+        )
+    }
 }
 
 /**
@@ -87,19 +130,24 @@ fun calculateInitialBounds(
 ): Rect {
     val screenBounds = Rect(0, 0, displayLayout.width(), displayLayout.height())
     val appAspectRatio = calculateAspectRatio(taskInfo)
-    val idealSize = calculateIdealSize(screenBounds, scale)
-    // If no top activity exists, apps fullscreen bounds and aspect ratio cannot be calculated.
-    // Instead default to the desired initial bounds.
     val stableBounds = Rect()
     displayLayout.getStableBoundsForDesktopMode(stableBounds)
+    val idealSize = calculateIdealSize(stableBounds, scale)
+    // If no top activity exists, apps fullscreen bounds and aspect ratio cannot be calculated.
+    // Instead default to the desired initial bounds.
     if (taskInfo.hasFullscreenOverride()) {
         // If the activity has a fullscreen override applied, it should be treated as
         // resizeable and match the device orientation. Thus the ideal size can be
         // applied.
-        return positionInScreen(idealSize, stableBounds)
+        return positionInScreen(idealSize, stableBounds).also {
+            fitBoundsInsideStableBounds(it, stableBounds)
+        }
     }
     val topActivityInfo =
-        taskInfo.topActivityInfo ?: return positionInScreen(idealSize, stableBounds)
+        taskInfo.topActivityInfo
+            ?: return positionInScreen(idealSize, stableBounds).also {
+                fitBoundsInsideStableBounds(it, stableBounds)
+            }
     val screenOrientation = requestedScreenOrientation ?: topActivityInfo.screenOrientation
     val stableBoundsOrientation = DesktopModeCompatUtils.computeConfigOrientation(stableBounds)
 
@@ -175,7 +223,9 @@ fun calculateInitialBounds(
             }
         }
 
-    return positionInScreen(initialSize, stableBounds)
+    return positionInScreen(initialSize, stableBounds).also {
+        fitBoundsInsideStableBounds(it, stableBounds)
+    }
 }
 
 /**
@@ -369,48 +419,115 @@ fun decideDesktopTaskPlacementBounds(
     deskId: Int,
     requestedTaskBounds: Rect?,
 ): Rect? {
-    // If the caller requested specific bounds, they should take priority.
+    val taskId = task.taskId
+    val currentBounds = Rect(task.configuration.windowConfiguration.bounds)
+    val isMinimized = taskRepository.isMinimizedTask(taskId)
+    val isVisible = taskRepository.isVisibleTask(taskId)
+    val displayLayout = displayController.getDisplayLayout(requestedDisplayId)
+    val stableBounds =
+        Rect().also { displayLayout?.getStableBoundsForDesktopMode(it) }
+
+    fun clampOrNull(bounds: Rect, path: String): Rect? {
+        if (stableBounds.isEmpty) {
+            ProtoLog.v(
+                WM_SHELL_DESKTOP_MODE,
+                "%s: path=%s taskId=%d bounds=%s (no stable bounds to clamp)",
+                PLACEMENT_BOUNDS_TAG,
+                path,
+                taskId,
+                bounds,
+            )
+            return bounds
+        }
+        val fitted = Rect(bounds)
+        fitBoundsInsideStableBounds(fitted, stableBounds)
+        ProtoLog.v(
+            WM_SHELL_DESKTOP_MODE,
+            "%s: path=%s taskId=%d from=%s to=%s stable=%s",
+            PLACEMENT_BOUNDS_TAG,
+            path,
+            taskId,
+            bounds,
+            fitted,
+            stableBounds,
+        )
+        // Return fitted bounds only when size overflow was corrected; otherwise leave placement.
+        return if (fitted != bounds) fitted else null
+    }
+
+    // Caller-requested bounds win. Shrink only if they overflow this display.
     if (requestedTaskBounds != null && !requestedTaskBounds.isEmpty) {
-        val displayLayout = displayController.getDisplayLayout(requestedDisplayId)
-        if (displayLayout == null) {
+        if (displayLayout == null || stableBounds.isEmpty) {
             return requestedTaskBounds
         }
-        val stableBounds = Rect().also { displayLayout.getStableBounds(it) }
-        val finalBounds =
-            Rect(requestedTaskBounds).apply {
-                // 1. Try to fit |requestedTaskBounds| in |stableBounds| without changing size
-                offset(max(stableBounds.left - left, 0), 0)
-                offset(min(stableBounds.right - right, 0), 0)
-                offset(0, max(stableBounds.top - top, 0))
-                offset(0, min(stableBounds.bottom - bottom, 0))
-
-                // 2. Ensure that |requestedTaskBounds| fit inside |stableBounds| even if that
-                // requires size changes.
-                intersect(stableBounds)
-            }
-
-        return finalBounds
+        val fitted = Rect(requestedTaskBounds)
+        fitBoundsInsideStableBounds(fitted, stableBounds)
+        ProtoLog.v(
+            WM_SHELL_DESKTOP_MODE,
+            "%s: path=requested_bounds taskId=%d requested=%s fitted=%s",
+            PLACEMENT_BOUNDS_TAG,
+            taskId,
+            requestedTaskBounds,
+            fitted,
+        )
+        return fitted
     }
 
     // Inherit bounds from closing task instance to prevent application jumping different
     // cascading positions.
     val inheritedTaskBounds =
         getInheritedExistingTaskBounds(taskRepository, shellTaskOrganizer, task, deskId)
-    if (!taskRepository.isActiveTask(task.taskId) && inheritedTaskBounds != null) {
-        return inheritedTaskBounds
+    if (!taskRepository.isActiveTask(taskId) && inheritedTaskBounds != null) {
+        val fitted = Rect(inheritedTaskBounds)
+        if (!stableBounds.isEmpty) {
+            fitBoundsInsideStableBounds(fitted, stableBounds)
+        }
+        ProtoLog.v(
+            WM_SHELL_DESKTOP_MODE,
+            "%s: path=inherit_trampoline taskId=%d bounds=%s",
+            PLACEMENT_BOUNDS_TAG,
+            taskId,
+            fitted,
+        )
+        return fitted
+    }
+
+    // Minimized relaunch on the same display/desk: do not cascade; only shrink if oversized.
+    // Desk membership: activeTasks *or* minimizedTasks (getDeskIdForTask is activeTasks-only).
+    if (isMinimized) {
+        val taskDeskId = taskRepository.getDeskIdForTask(taskId)
+        val minimizedInTargetDesk =
+            taskId in taskRepository.getMinimizedTaskIdsInDesk(deskId)
+        val sameDisplay = task.displayId == requestedDisplayId
+        val sameDesk =
+            taskDeskId == deskId || (taskDeskId == null && minimizedInTargetDesk)
+        if (!sameDisplay || !sameDesk) {
+            ProtoLog.v(
+                WM_SHELL_DESKTOP_MODE,
+                "%s: path=skip_preserve_minimized taskId=%d sameDisplay=%b sameDesk=%b" +
+                    " taskDisplay=%d requestedDisplay=%d taskDeskId=%s deskId=%d" +
+                    " minimizedInTargetDesk=%b",
+                PLACEMENT_BOUNDS_TAG,
+                taskId,
+                sameDisplay,
+                sameDesk,
+                task.displayId,
+                requestedDisplayId,
+                taskDeskId,
+                deskId,
+                minimizedInTargetDesk,
+            )
+        } else {
+            return clampOrNull(currentBounds, "preserve_minimized_bounds")
+        }
     }
 
     // TODO: b/365723620 - Handle non running tasks that were launched after reboot.
     // If task is already visible, it must have been handled already and added to desktop mode.
     // Cascade task only if it's not visible yet.
-    if (
-        DesktopModeFlags.ENABLE_CASCADING_WINDOWS.isTrue() &&
-            !taskRepository.isVisibleTask(task.taskId)
-    ) {
-        val displayLayout = displayController.getDisplayLayout(requestedDisplayId)
-        if (displayLayout != null) {
-            val stableBounds = Rect().also { displayLayout.getStableBounds(it) }
-            val initialBounds = Rect(task.configuration.windowConfiguration.bounds)
+    if (DesktopModeFlags.ENABLE_CASCADING_WINDOWS.isTrue() && !isVisible) {
+        if (displayLayout != null && !stableBounds.isEmpty) {
+            val initialBounds = Rect(currentBounds)
             cascadeWindow(
                 context,
                 recentTasksController,
@@ -421,12 +538,21 @@ fun decideDesktopTaskPlacementBounds(
                 deskId,
                 stableBounds,
             )
+            fitBoundsInsideStableBounds(initialBounds, stableBounds)
+            ProtoLog.v(
+                WM_SHELL_DESKTOP_MODE,
+                "%s: path=cascade_invisible taskId=%d before=%s after=%s",
+                PLACEMENT_BOUNDS_TAG,
+                taskId,
+                currentBounds,
+                initialBounds,
+            )
             return initialBounds
         }
     }
 
-    // No strategy has overridden bounds provided initially in TaskInfo.
-    return null
+    // Visible / already placed: still correct oversized windows (options inheritance).
+    return clampOrNull(currentBounds, "keep_existing_bounds")
 }
 
 /**
@@ -458,6 +584,7 @@ fun cascadeWindow(
                 val taskBounds = it.configuration.windowConfiguration.bounds
                 if (!taskBounds.isEmpty()) {
                     cascadeWindow(context.resources, stableBounds, taskBounds, bounds)
+                    fitBoundsInsideStableBounds(bounds, stableBounds)
                     return@let
                 }
                 // RecentsTaskInfo might not have configuration bounds populated yet so use
@@ -467,6 +594,7 @@ fun cascadeWindow(
                     it.lastNonFullscreenBounds?.let {
                         if (!it.isEmpty()) {
                             cascadeWindow(context.resources, stableBounds, it, bounds)
+                            fitBoundsInsideStableBounds(bounds, stableBounds)
                         }
                     }
                 }

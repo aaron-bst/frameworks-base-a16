@@ -273,22 +273,40 @@ class DesktopModeLaunchParamsModifier implements LaunchParamsModifier {
             return RESULT_SKIP;
         }
 
-        if ((options == null || options.getLaunchBounds() == null) && task.hasOverrideBounds()) {
-            if (DesktopModeFlags.DISABLE_DESKTOP_LAUNCH_PARAMS_OUTSIDE_DESKTOP_BUG_FIX.isTrue()) {
-                final Rect overrideTaskBounds = task.getRequestedOverrideBounds();
-                if (DesktopExperienceFlags.IGNORE_OVERRIDE_TASK_BOUNDS_IF_INCOMPATIBLE_WITH_DISPLAY
-                        .isTrue() && areTaskBoundsValidForDisplay(overrideTaskBounds, display)) {
-                    // We are in desktop, return result done to prevent other modifiers from
-                    // modifying exiting task bounds or resolved windowing mode.
-                    if (ENABLE_FREEFORM_DISPLAY_LAUNCH_PARAMS.isTrue()) {
-                        outParams.mBounds.set(overrideTaskBounds);
+        // If the task already has freeform override bounds that fit this display, keep them
+        // when launchBounds would overflow (cannot be shown as-is). Do not treat fitting
+        // launchBounds as a launcher bug — those are a real geometry request and fall through.
+        if (task.hasOverrideBounds()) {
+            final Rect overrideTaskBounds = task.getRequestedOverrideBounds();
+            final boolean overrideValidForDisplay =
+                    areTaskBoundsValidForDisplay(overrideTaskBounds, display);
+            final boolean launchBoundsOverflowThisDisplay =
+                    isLaunchBoundsLargerThanDisplay(options, display);
+            final boolean noOptionsBounds =
+                    options == null || options.getLaunchBounds() == null;
+            if (overrideValidForDisplay && launchBoundsOverflowThisDisplay) {
+                outParams.mBounds.set(overrideTaskBounds);
+                appendLog("prefer-override-over-overflowing-options=%s", overrideTaskBounds);
+                return RESULT_DONE;
+            }
+            if (noOptionsBounds) {
+                if (DesktopModeFlags.DISABLE_DESKTOP_LAUNCH_PARAMS_OUTSIDE_DESKTOP_BUG_FIX
+                        .isTrue()) {
+                    if (DesktopExperienceFlags
+                            .IGNORE_OVERRIDE_TASK_BOUNDS_IF_INCOMPATIBLE_WITH_DISPLAY.isTrue()
+                            && overrideValidForDisplay) {
+                        // We are in desktop, return result done to prevent other modifiers from
+                        // modifying exiting task bounds or resolved windowing mode.
+                        if (ENABLE_FREEFORM_DISPLAY_LAUNCH_PARAMS.isTrue()) {
+                            outParams.mBounds.set(overrideTaskBounds);
+                        }
+                        appendLog("task-has-override-bounds=%s", overrideTaskBounds);
+                        return RESULT_DONE;
                     }
-                    appendLog("task-has-override-bounds=%s", overrideTaskBounds);
-                    return RESULT_DONE;
+                } else {
+                    appendLog("current task has bounds set, not overriding");
+                    return RESULT_SKIP;
                 }
-            } else {
-                appendLog("current task has bounds set, not overriding");
-                return RESULT_SKIP;
             }
         }
 
@@ -487,6 +505,23 @@ class DesktopModeLaunchParamsModifier implements LaunchParamsModifier {
         final Rect displayStableBounds = new Rect();
         displayContent.getStableRect(displayStableBounds);
         return displayStableBounds.contains(taskBounds);
+    }
+
+    /**
+     * True when {@link ActivityOptions#getLaunchBounds()} cannot be shown on this display without
+     * shrinking (width or height exceeds stable). Used only to decide whether a valid task
+     * override should win over those options.
+     */
+    private boolean isLaunchBoundsLargerThanDisplay(@Nullable ActivityOptions options,
+            @NonNull DisplayContent displayContent) {
+        if (options == null || options.getLaunchBounds() == null) {
+            return false;
+        }
+        final Rect launchBounds = options.getLaunchBounds();
+        final Rect stableBounds = new Rect();
+        displayContent.getStableRect(stableBounds);
+        return launchBounds.width() > stableBounds.width()
+                || launchBounds.height() > stableBounds.height();
     }
 
     /**
