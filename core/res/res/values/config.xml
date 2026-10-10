@@ -4721,7 +4721,7 @@
              screen (smallest width >= {@link WindowManager#LARGE_SCREEN_SMALLEST_SCREEN_WIDTH_DP}).
           1: The device always supports non-resizable in multi windowing modes.
     -->
-    <integer name="config_supportsNonResizableMultiWindow">0</integer>
+    <integer name="config_supportsNonResizableMultiWindow">1</integer>
 
     <!-- Whether the device checks the activity min width/height to determine if it can be shown in
          multi windowing modes.
