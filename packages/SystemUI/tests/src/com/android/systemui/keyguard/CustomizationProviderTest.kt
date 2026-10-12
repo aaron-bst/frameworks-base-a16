@@ -84,6 +84,7 @@ import org.junit.runner.RunWith
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mock
+import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
 
@@ -241,11 +242,16 @@ class CustomizationProviderTest : SysuiTestCase() {
     }
 
     @Test
-    fun onAttachInfo_reportsContext() {
+    fun attachInfo_defersInjectionUntilQuery() {
+        val provider = CustomizationProvider()
         val callback: ContentProviderContextAvailableCallback = mock()
-        underTest.setContextAvailableCallback(callback)
+        provider.setContextAvailableCallback(callback)
 
-        underTest.attachInfo(context, null)
+        provider.attachInfo(context, ProviderInfo().apply { authority = Contract.AUTHORITY })
+
+        verify(callback, never()).onContextAvailable(any())
+
+        provider.query(Contract.FlagsTable.URI, null, null, null, null)
 
         verify(callback).onContextAvailable(context)
     }
