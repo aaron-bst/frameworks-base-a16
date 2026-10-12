@@ -5739,10 +5739,18 @@ final class ActivityRecord extends WindowToken {
                 mAtmService.updateActivityUsageStats(this, Event.ACTIVITY_RESUMED);
                 // R259 bstNotifyActivityDisplayed: focus may stay on SystemUI;
                 // notify host when a real activity becomes RESUMED.
-                try {
-                    mWmService.bstNotifyActivityDisplayed(this);
-                } catch (Exception e) {
-                    Slog.w(TAG, "R259 bstNotifyActivityDisplayed failed: " + e);
+                // BS-A16: only when this activity actually holds the top-resumed
+                // position. When a fullscreen app enters a desk (windowed), home
+                // is RESUMED behind it but focus stays on the desk's app —
+                // notifying home there would make the player think the game
+                // went to the background. Home click still notifies: home
+                // takes focus and becomes top-resumed.
+                if (mRootWindowContainer.getTopResumedActivity() == this) {
+                    try {
+                        mWmService.bstNotifyActivityDisplayed(this);
+                    } catch (Exception e) {
+                        Slog.w(TAG, "R259 bstNotifyActivityDisplayed failed: " + e);
+                    }
                 }
                 // Fall through.
             case STARTED:
