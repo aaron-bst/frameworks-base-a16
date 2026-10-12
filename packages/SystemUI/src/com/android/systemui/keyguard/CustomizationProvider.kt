@@ -52,6 +52,12 @@ class CustomizationProvider : ContentProvider(), ContentProviderContextInitializ
 
     private lateinit var contextAvailableCallback: ContentProviderContextAvailableCallback
 
+    /**
+     * Set only after [ensureInjected] finishes. Volatile so a binder thread that observes it also
+     * observes the injected fields written before it.
+     */
+    @Volatile private var dependenciesInjected = false
+
     private val uriMatcher =
         UriMatcher(UriMatcher.NO_MATCH).apply {
             addURI(
@@ -88,8 +94,24 @@ class CustomizationProvider : ContentProvider(), ContentProviderContextInitializ
     }
 
     override fun attachInfo(context: Context?, info: ProviderInfo?) {
-        contextAvailableCallback.onContextAvailable(checkNotNull(context))
+        // Injection builds KeyguardQuickAffordanceInteractor and the default-display component
+        // (PerDisplayInstanceRepositoryImpl.get → every lifecycle listener) on the caller. This
+        // runs inside handleBindApplication, before Application.onCreate, and trips the startup
+        // ANR when that work exceeds BIND_APPLICATION_TIMEOUT. Defer it to the first real call.
         super.attachInfo(context, info)
+    }
+
+    private fun ensureInjected() {
+        if (dependenciesInjected) return
+        synchronized(this) {
+            if (dependenciesInjected) return
+            val ctx = context ?: return
+            if (!::contextAvailableCallback.isInitialized) return
+            contextAvailableCallback.onContextAvailable(ctx)
+            if (::mainDispatcher.isInitialized) {
+                dependenciesInjected = true
+            }
+        }
     }
 
     override fun setContextAvailableCallback(callback: ContentProviderContextAvailableCallback) {
@@ -134,6 +156,7 @@ class CustomizationProvider : ContentProvider(), ContentProviderContextInitializ
     }
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? {
+        ensureInjected()
         if (!::mainDispatcher.isInitialized) return null
         if (uriMatcher.match(uri) != MATCH_CODE_ALL_SELECTIONS) {
             throw UnsupportedOperationException()
@@ -149,6 +172,7 @@ class CustomizationProvider : ContentProvider(), ContentProviderContextInitializ
         selectionArgs: Array<out String>?,
         sortOrder: String?,
     ): Cursor? {
+        ensureInjected()
         if (!::mainDispatcher.isInitialized) return null
         return runBlocking("$TAG#query", mainDispatcher) {
             when (uriMatcher.match(uri)) {
@@ -173,6 +197,7 @@ class CustomizationProvider : ContentProvider(), ContentProviderContextInitializ
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+        ensureInjected()
         if (!::mainDispatcher.isInitialized) return 0
         if (uriMatcher.match(uri) != MATCH_CODE_ALL_SELECTIONS) {
             throw UnsupportedOperationException()
@@ -182,18 +207,19 @@ class CustomizationProvider : ContentProvider(), ContentProviderContextInitializ
     }
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
-        return if (
+        if (
             requireContext()
                 .checkPermission(
                     android.Manifest.permission.BIND_WALLPAPER,
                     Binder.getCallingPid(),
                     Binder.getCallingUid(),
-                ) == PackageManager.PERMISSION_GRANTED
+                ) != PackageManager.PERMISSION_GRANTED
         ) {
-            previewManager.preview(extras)
-        } else {
-            null
+            return null
         }
+        ensureInjected()
+        if (!::previewManager.isInitialized) return null
+        return previewManager.preview(extras)
     }
 
     private suspend fun insertSelection(values: ContentValues?): Uri? {

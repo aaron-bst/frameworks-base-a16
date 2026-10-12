@@ -48,7 +48,9 @@ abstract class SystemUIAppComponentFactoryBase : AppComponentFactory() {
     companion object {
         private const val TAG = "AppComponentFactory"
         // Must be static due to http://b/141008541.
-        var systemUIInitializer: SystemUIInitializer? = null
+        @Volatile var systemUIInitializer: SystemUIInitializer? = null
+
+        private val initializerCreateLock = Any()
     }
 
     @set:Inject lateinit var componentHelper: ContextComponentHelper
@@ -61,21 +63,28 @@ abstract class SystemUIAppComponentFactoryBase : AppComponentFactory() {
     protected abstract fun createSystemUIInitializer(context: Context): SystemUIInitializer
 
     private fun createSystemUIInitializerInternal(context: Context): SystemUIInitializer {
-        return systemUIInitializer
-            ?: run {
-                val initializer = createSystemUIInitializer(context.applicationContext)
-                try {
-                    initializer.init(false)
-                } catch (exception: ExecutionException) {
-                    throw RuntimeException("Failed to initialize SysUI", exception)
-                } catch (exception: InterruptedException) {
-                    throw RuntimeException("Failed to initialize SysUI", exception)
-                }
-                initializer.sysUIComponent.inject(this@SystemUIAppComponentFactoryBase)
-
-                systemUIInitializer = initializer
-                return initializer
+        systemUIInitializer?.let {
+            return it
+        }
+        // CustomizationProvider injects on the binder thread of its first query, which can overlap
+        // Application.onCreate. Both paths call here.
+        synchronized(initializerCreateLock) {
+            systemUIInitializer?.let {
+                return it
             }
+            val initializer = createSystemUIInitializer(context.applicationContext)
+            try {
+                initializer.init(false)
+            } catch (exception: ExecutionException) {
+                throw RuntimeException("Failed to initialize SysUI", exception)
+            } catch (exception: InterruptedException) {
+                throw RuntimeException("Failed to initialize SysUI", exception)
+            }
+            initializer.sysUIComponent.inject(this@SystemUIAppComponentFactoryBase)
+
+            systemUIInitializer = initializer
+            return initializer
+        }
     }
 
     override fun instantiateApplicationCompat(cl: ClassLoader, className: String): Application {
