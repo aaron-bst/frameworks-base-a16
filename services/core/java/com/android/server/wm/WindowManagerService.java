@@ -408,6 +408,7 @@ import android.accounts.Account;
 import android.accounts.AccountManager;
 
 import com.bluestacks.os.BstFilterAppsManager;
+import com.bluestacks.os.BstHostCallCcCodes;
 import com.bluestacks.os.BstHostCallManager;
 import com.bluestacks.os.BstUtilsManager;
 
@@ -1148,6 +1149,8 @@ public class WindowManagerService extends IWindowManager.Stub
     private boolean mBstSpecialAppKeyboardHandlingEnabled;
     private boolean mBstHeadsetPlugged;
     private String mBstPreviousCallingPackage = "";
+    /** Last package reported via {@link #bstNotifyActivityWindowFocused}. */
+    private String mBstLastWindowFocusedPackage = "";
 
     /** Indicates whether this device supports wide color gamut / HDR rendering */
     private boolean mHasWideColorGamutSupport;
@@ -6918,7 +6921,7 @@ public class WindowManagerService extends IWindowManager.Stub
     }
 
     // R259 / Henry: require ActivityRecord (no owningPackage fallback for systemui chrome).
-    // Also used by ActivityRecord RESUMED hook.
+    // Host SetFreeformLaunch waits for this, not for RESUMED.
     void bstSendTopDisplayedOnFocusChange(WindowState newFocus) {
         if (newFocus == null) {
             return;
@@ -6927,7 +6930,71 @@ public class WindowManagerService extends IWindowManager.Stub
         if (activityRecord == null) {
             return;
         }
+        // Existing host signal: keep its original trigger (any non-null focus).
         bstNotifyActivityDisplayed(activityRecord, newFocus);
+        // New signal: only when the window can actually receive keys.
+        if (newFocus.canReceiveKeys()) {
+            bstNotifyActivityWindowFocused(activityRecord);
+        }
+    }
+
+    /**
+     * Tell the host a real activity window can receive keys.
+     * Separate from {@link #bstNotifyActivityDisplayed}: that hcall is deduped on
+     * {@code bst.config.top_displayed_pkg} and is what the host uses for guest ready.
+     */
+    private void bstNotifyActivityWindowFocused(ActivityRecord activityRecord) {
+        String packageName = activityRecord.packageName;
+        if (packageName == null || packageName.isEmpty()
+                || "android".equals(packageName)
+                || "com.android.systemui".equals(packageName)
+                || "com.android.settings".equals(packageName)) {
+            return;
+        }
+        if (packageName.equalsIgnoreCase(mBstLastWindowFocusedPackage)) {
+            return;
+        }
+
+        String activityName = packageName;
+        if (activityRecord.mActivityComponent != null) {
+            activityName = activityRecord.mActivityComponent.getClassName();
+        } else if (activityRecord.intent != null
+                && activityRecord.intent.getComponent() != null) {
+            activityName = activityRecord.intent.getComponent().getClassName();
+        }
+        if (activityName == null || activityName.isEmpty()) {
+            activityName = packageName;
+        }
+        if ("com.android.settings.FallbackHome".equalsIgnoreCase(activityName)) {
+            return;
+        }
+
+        BstHostCallManager hostCall = mBstHostCallManagerService;
+        if (hostCall == null) {
+            try {
+                hostCall = (BstHostCallManager) mContext.getSystemService(Context.BST_HOST_CALL);
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "BST activity window focused: BST_HOST_CALL unavailable", e);
+                return;
+            }
+        }
+        if (hostCall == null) {
+            return;
+        }
+        try {
+            Slog.w(TAG, "BST activity window focused package=" + packageName
+                    + " activity=" + activityName);
+            final int rval = hostCall.commonCommand(
+                    BstHostCallCcCodes.HCALL_CC_hcallActivityWindowFocused,
+                    packageName, activityName);
+            if (rval != 0) {
+                Slog.w(TAG, "BST activity window focused rval=" + rval);
+                return;
+            }
+            mBstLastWindowFocusedPackage = packageName;
+        } catch (RuntimeException e) {
+            Slog.w(TAG, "BST activity window focused failed: " + e);
+        }
     }
 
 

@@ -620,6 +620,20 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     ActivityRecord mFocusedApp = null;
 
     /**
+     * InputDispatcher has no focused app because no window can receive keys.
+     * Publishing a focused app with a null focused window starts the
+     * "Application does not have a focused window" ANR.
+     */
+    private boolean mBstFocusedAppInputSuppressed;
+
+    /**
+     * The suppression above was caused by a shell transition that removed the
+     * key-capable window. When that transition ends with still no such window,
+     * publish the focused app again so a stuck transition is not silent forever.
+     */
+    private boolean mBstFocusedAppSuppressedForTransition;
+
+    /**
      * We only respect the orientation request from apps below this {@link TaskDisplayArea}.
      * It is the last focused {@link TaskDisplayArea} on this display that handles orientation
      * request.
@@ -4134,6 +4148,7 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         }
         WindowState newFocus = findFocusedWindowIfNeeded(topFocusedDisplayId);
         if (mCurrentFocus == newFocus) {
+            bstSyncFocusedAppInput(newFocus);
             return false;
         }
         boolean imeLayeringTargetChanged = false;
@@ -4195,6 +4210,9 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         if (mode != UPDATE_FOCUS_WILL_ASSIGN_LAYERS) {
             // If we defer assigning layers, then the caller is responsible for doing this part.
             getInputMonitor().setInputFocusLw(newFocus, updateInputWindows);
+            // Same beat as setInputFocusLw: do not leave focused-app set while the
+            // focused window is null, and do not keep a removed window focused.
+            bstSyncFocusedAppInput(newFocus);
         }
 
         adjustForImeIfNeeded();
@@ -4256,8 +4274,64 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
             if (newTask != null) newTask.onAppFocusChanged(true);
         }
 
-        getInputMonitor().setFocusedAppLw(newFocus);
+        bstPublishFocusedAppForInput(newFocus);
         return true;
+    }
+
+    /**
+     * Give InputDispatcher {@code newFocus} only when some window can already receive keys.
+     * Otherwise drop keys instead of starting the no-focused-window ANR timer.
+     */
+    private void bstPublishFocusedAppForInput(ActivityRecord newFocus) {
+        if (newFocus == null) {
+            mBstFocusedAppInputSuppressed = false;
+            mBstFocusedAppSuppressedForTransition = false;
+            getInputMonitor().setFocusedAppLw(null);
+            return;
+        }
+        if (findFocusedWindow() != null) {
+            mBstFocusedAppInputSuppressed = false;
+            mBstFocusedAppSuppressedForTransition = false;
+            getInputMonitor().setFocusedAppLw(newFocus);
+            return;
+        }
+        mBstFocusedAppInputSuppressed = true;
+        mBstFocusedAppSuppressedForTransition = false;
+        getInputMonitor().setFocusedAppLw(null);
+    }
+
+    /**
+     * Keep InputDispatcher's focused app aligned with a window that can receive keys.
+     * During a transition that clears that window, unpublish the app. Republish it
+     * with the replacement window, or when the transition ends with none.
+     */
+    private void bstSyncFocusedAppInput(@Nullable WindowState focus) {
+        if (mFocusedApp == null) {
+            mBstFocusedAppInputSuppressed = false;
+            mBstFocusedAppSuppressedForTransition = false;
+            return;
+        }
+        if (focus != null && focus.canReceiveKeys()) {
+            if (mBstFocusedAppInputSuppressed) {
+                getInputMonitor().setFocusedAppLw(mFocusedApp);
+                mBstFocusedAppInputSuppressed = false;
+                mBstFocusedAppSuppressedForTransition = false;
+            }
+            return;
+        }
+        if (mTransitionController.inTransition(mFocusedApp)) {
+            if (!mBstFocusedAppInputSuppressed) {
+                getInputMonitor().setFocusedAppLw(null);
+                mBstFocusedAppInputSuppressed = true;
+            }
+            mBstFocusedAppSuppressedForTransition = true;
+            return;
+        }
+        if (mBstFocusedAppSuppressedForTransition) {
+            getInputMonitor().setFocusedAppLw(mFocusedApp);
+            mBstFocusedAppInputSuppressed = false;
+            mBstFocusedAppSuppressedForTransition = false;
+        }
     }
 
     /** Update the top activity and the uids of non-finishing activity */
