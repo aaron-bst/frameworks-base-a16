@@ -2140,6 +2140,20 @@ class Task extends TaskFragment {
             mTransitionController.collectVisibleChange(this);
         }
 
+        // BS-A16: windowing of this task settled to a new value (desk
+        // transitions resolve undefined -> freeform after resume); tell the
+        // host when this task holds the top resumed activity.
+        if (prevWinMode != getWindowingMode()) {
+            try {
+                final ActivityRecord top = topRunningActivity();
+                if (top != null && getTopResumedActivity() == top) {
+                    mAtmService.mWindowManager.bstNotifyWindowingModeChangedIfCurrent(this);
+                }
+            } catch (Exception e) {
+                Slog.w(TAG, "R259 windowing notify failed: " + e);
+            }
+        }
+
         // If the configuration supports persistent bounds (eg. Freeform), keep track of the
         // current (non-fullscreen) bounds for persistence.
         if (persistTaskBounds(getWindowConfiguration())) {
