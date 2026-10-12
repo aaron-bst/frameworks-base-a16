@@ -17,6 +17,8 @@ public class BstHostCallCcCodes {
     public static final int HCALL_CC_hcallSplitAdsExitComplete  = 0x5;
     public static final int HCALL_CC_hcallPasswordInputOn       = 0x6;
     public static final int HCALL_CC_hcallPasswordInputOff      = 0x7;
+    /** Activity window can receive keys. Host sends SetFreeformLaunch once. */
+    public static final int HCALL_CC_hcallActivityWindowFocused = 0xC;
 
     public static String getHCallCcName(int code) {
         switch (code) {
@@ -34,6 +36,8 @@ public class BstHostCallCcCodes {
                 return "HCALL_CC_hcallPasswordInputOn";
             case HCALL_CC_hcallPasswordInputOff:
                 return "HCALL_CC_hcallPasswordInputOff";
+            case HCALL_CC_hcallActivityWindowFocused:
+                return "HCALL_CC_hcallActivityWindowFocused";
             default:
                 return "UnknownCode";
         }
