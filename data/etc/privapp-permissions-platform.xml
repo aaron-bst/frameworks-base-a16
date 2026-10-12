@@ -689,6 +689,18 @@ applications that come with the platform
         <permission name="android.permission.BIND_WALLPAPER"/>
     </privapp-permissions>
 
+    <!-- bst-v16: the Polaris launcher is a priv-app signed with bluestacks-market; these grants make its
+         SystemSetup provisioning (notification listener, DND policy, accessibility, key injection, Home
+         role) work out of the box. Requires the matching |privileged protection levels in
+         frameworks/base/core/res/AndroidManifest.xml. -->
+    <privapp-permissions package="com.bluestacks.polaris">
+        <permission name="android.permission.WRITE_SECURE_SETTINGS"/>
+        <permission name="android.permission.MANAGE_NOTIFICATION_LISTENERS"/>
+        <permission name="android.permission.MANAGE_NOTIFICATIONS"/>
+        <permission name="android.permission.INJECT_EVENTS"/>
+        <permission name="android.permission.MANAGE_ROLE_HOLDERS"/>
+    </privapp-permissions>
+
     <privapp-permissions package="com.bluestacks.BstCommandProcessor">
         <permission name="android.permission.FORCE_STOP_PACKAGES"/>
         <permission name="android.permission.INSTALL_PACKAGES"/>
