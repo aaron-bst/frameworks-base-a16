@@ -7232,9 +7232,11 @@ public class WindowManagerService extends IWindowManager.Stub
             return;
         }
         // Host already ignores these; skip to avoid polluting top_displayed_pkg.
+        // BS-A16: Settings removed from the filter — the player now tracks its
+        // windowing mode (hcall 0x48), so opening Settings over a game must
+        // produce both the activity-displayed and the windowing notification.
         if (packageName.equals("android")
-                || packageName.equals("com.android.systemui")
-                || packageName.equals("com.android.settings")) {
+                || packageName.equals("com.android.systemui")) {
             return;
         }
 
