@@ -603,7 +603,11 @@ public class Transitions implements RemoteCallable<Transitions>,
             if (mode == TRANSIT_OPEN || mode == TRANSIT_TO_FRONT) {
                 t.show(leash);
                 t.setMatrix(leash, 1, 0, 0, 1);
-                if (isOpening
+                if (isStationaryFreeform(change)) {
+                    // POL-233: Play Store only. Zeroing alpha hides that handoff for the whole
+                    // remote transition. Other apps still fade in.
+                    t.setAlpha(leash, 1.f);
+                } else if (isOpening
                         // If this is a transferred starting window, we want it immediately visible.
                         && (change.getFlags() & FLAG_STARTING_WINDOW_TRANSFER_RECIPIENT) == 0) {
                     t.setAlpha(leash, 0.f);
@@ -622,6 +626,24 @@ public class Transitions implements RemoteCallable<Transitions>,
                 finishT.show(leash);
             }
         }
+    }
+
+    /**
+     * Play Store only. Its singleInstance handoff is already at the final rect, so hiding the
+     * leash is a blink. Other freeform launches keep the fade even when bounds do not change.
+     */
+    private static boolean isStationaryFreeform(@NonNull TransitionInfo.Change change) {
+        if (change.getTaskInfo() == null
+                || change.getTaskInfo().baseActivity == null
+                || !"com.android.vending".equals(
+                        change.getTaskInfo().baseActivity.getPackageName())
+                || change.getTaskInfo().getWindowingMode() != WINDOWING_MODE_FREEFORM) {
+            return false;
+        }
+        if (change.getEndAbsBounds().isEmpty()) {
+            return false;
+        }
+        return change.getStartAbsBounds().equals(change.getEndAbsBounds());
     }
 
     static int calculateAnimLayer(@NonNull TransitionInfo.Change change, int i,

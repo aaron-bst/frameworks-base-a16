@@ -5745,13 +5745,28 @@ final class ActivityRecord extends WindowToken {
                 // notifying home there would make the player think the game
                 // went to the background. Home click still notifies: home
                 // takes focus and becomes top-resumed.
-                if (mRootWindowContainer.getTopResumedActivity() == this) {
-                    try {
-                        mWmService.bstNotifyActivityDisplayed(this);
-                    } catch (Exception e) {
-                        Slog.w(TAG, "R259 bstNotifyActivityDisplayed failed: " + e);
+                // Guest ready only. Focus may still be on SystemUI and this window
+                // often cannot receive keys yet. Freeform waits for
+                // bstSendTopDisplayedOnFocusChange.
+                // The top-resumed check is deferred to after the current WM
+                // transaction settles: setState(RESUMED) and the topResumed/focus
+                // update both run under mGlobalLock, but their relative order is
+                // not guaranteed, so checking synchronously here can miss the
+                // window where this activity has resumed before topResumed
+                // reflects it. Posting to mH re-checks once the transaction is
+                // done; bstNotifyActivityDisplayed is deduped on
+                // bst.config.top_displayed_pkg, so a late duplicate is harmless.
+                mWmService.mH.post(() -> {
+                    synchronized (mWmService.mGlobalLock) {
+                        if (mRootWindowContainer.getTopResumedActivity() == this) {
+                            try {
+                                mWmService.bstNotifyActivityDisplayed(this);
+                            } catch (Exception e) {
+                                Slog.w(TAG, "R259 bstNotifyActivityDisplayed failed: " + e);
+                            }
+                        }
                     }
-                }
+                });
                 // Fall through.
             case STARTED:
                 // Update process info while making an activity from invisible to visible, to make
@@ -7120,6 +7135,14 @@ final class ActivityRecord extends WindowToken {
             ActivityOptions candidateOptions) {
         if (mTaskOverlay) {
             // We don't show starting window for overlay activities.
+            return;
+        }
+        // POL-233: Play Store's singleInstance handoff must not add a second, empty splash.
+        // The splash already on the visible task stays until the replacement window is shown
+        // in the same frame. A phone never uncovers the app between those two.
+        if ("com.android.vending".equals(packageName)
+                && sourceRecord != null
+                && "com.android.vending".equals(sourceRecord.packageName)) {
             return;
         }
         final ActivityOptions startOptions = candidateOptions != null

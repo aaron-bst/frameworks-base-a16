@@ -25,6 +25,8 @@ import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 
 import static com.android.internal.policy.DesktopModeCompatUtils.shouldExcludeCaptionFromAppBounds;
 import static com.android.internal.policy.SystemBarUtils.getDesktopViewAppHeaderHeightPx;
+import static com.android.internal.policy.SystemBarUtils.getStatusBarHeight;
+import static com.android.internal.policy.SystemBarUtils.getTaskbarHeight;
 import static com.android.server.wm.LaunchParamsUtil.applyLayoutGravity;
 import static com.android.server.wm.LaunchParamsUtil.calculateLayoutBounds;
 
@@ -35,6 +37,7 @@ import android.app.WindowConfiguration;
 import android.content.Context;
 import android.content.pm.ActivityInfo.WindowLayout;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.Rect;
 import android.os.SystemProperties;
 import android.util.Size;
@@ -76,8 +79,12 @@ public final class DesktopModeBoundsCalculator {
             @NonNull Consumer<String> logger) {
         // Use stable frame instead of raw frame to avoid launching freeform windows on top of
         // stable insets, which usually are system widgets such as sysbar & navbar.
+        // getStableRect can omit the status-bar top and the taskbar bottom that Shell reserves
+        // in DisplayLayout.getStableBoundsForDesktopMode. Clamp to that same rect here so the
+        // task is born at the OPEN transition's end bounds (sb == eb, no resize animation).
         final Rect stableBounds = new Rect();
         displayContent.getStableRect(stableBounds);
+        applyDesktopModeStableBounds(displayContent, stableBounds);
 
         final boolean hasFullscreenOverride = activity != null
                 && activity.mAppCompatController.getAspectRatioOverrides().hasFullscreenOverride();
@@ -140,6 +147,48 @@ public final class DesktopModeBoundsCalculator {
             outParams.mAppBounds.set(outParams.mBounds);
             outParams.mAppBounds.top += captionHeight;
             logger.accept("exclude-caption-height-from-app-bounds");
+        }
+    }
+
+    /**
+     * Tightens {@code stableBounds} to the desktop stable rect Shell uses.
+     *
+     * <p>{@link DisplayContent#getStableRect} follows the current insets state. On this guest
+     * that state can be the full framebuffer (top 0, bottom = display height) while Shell's
+     * {@code DisplayLayout.getStableBoundsForDesktopMode} still reserves the status bar and,
+     * when the nav-bar frame height differs from the taskbar frame height, replaces the bottom
+     * with {@code displayHeight - taskbarHeight}. A launch rect that fills the framebuffer is
+     * then shrunk inside the OPEN transition. Applying the same insets here makes start bounds
+     * equal those end bounds.
+     */
+    private static void applyDesktopModeStableBounds(@NonNull DisplayContent displayContent,
+            @NonNull Rect stableBounds) {
+        final Rect displayBounds = displayContent.getBounds();
+        if (displayBounds.isEmpty()) {
+            return;
+        }
+        final Resources res = displayContent.mWmService.mContext
+                .createDisplayContext(displayContent.getDisplay())
+                .getResources();
+        if (displayContent.isDefaultDisplay) {
+            final int statusBarHeight = getStatusBarHeight(res,
+                    displayContent.getDisplay().getCutout());
+            stableBounds.top = Math.max(stableBounds.top,
+                    displayBounds.top + statusBarHeight);
+        }
+        final boolean landscape = displayBounds.width() > displayBounds.height();
+        final int navBarFrameHeight = res.getDimensionPixelSize(landscape
+                ? com.android.internal.R.dimen.navigation_bar_frame_height_landscape
+                : com.android.internal.R.dimen.navigation_bar_frame_height);
+        final int taskbarHeight = getTaskbarHeight(res);
+        // Same condition as DisplayLayout.getStableBoundsForDesktopMode.
+        if (navBarFrameHeight != taskbarHeight) {
+            final int taskbarBottom = displayBounds.top + displayBounds.height() - taskbarHeight;
+            stableBounds.bottom = Math.min(stableBounds.bottom, taskbarBottom);
+        }
+        if (stableBounds.top >= stableBounds.bottom
+                || stableBounds.left >= stableBounds.right) {
+            displayContent.getStableRect(stableBounds);
         }
     }
 

@@ -3183,10 +3183,20 @@ class DesktopTasksController(
         val useParamDisplayId =
             DesktopExperienceFlags.ENABLE_MULTIPLE_DESKTOPS_BACKEND.isTrue ||
                 ENABLE_PER_DISPLAY_DESKTOP_WALLPAPER_ACTIVITY.isTrue
-        moveHomeTaskToTop(
-            displayId = if (useParamDisplayId) displayId else context.displayId,
-            wct = wct,
-        )
+        // Home is already the surface behind desktop windows. Reordering it to the top here
+        // resumes the launcher in the middle of the launch (host sees a fg flip and drops its
+        // frame). The desk is reordered above home in this same transaction.
+        if (desktopState.shouldShowHomeBehindDesktop) {
+            logV(
+                "prepareForDeskActivation: leave home behind desktop, displayId=%d",
+                displayId,
+            )
+        } else {
+            moveHomeTaskToTop(
+                displayId = if (useParamDisplayId) displayId else context.displayId,
+                wct = wct,
+            )
+        }
         // Currently, we only handle the desktop on the default display really.
         if (
             (displayId == DEFAULT_DISPLAY ||
@@ -3236,10 +3246,7 @@ class DesktopTasksController(
                 } else if (DesktopModeFlags.ENABLE_DESKTOP_WINDOWING_PERSISTENCE.isTrue()) {
                     // Task is not running, start it
                     val startDesk = repository.getDefaultDeskId(displayId) ?: INVALID_DESK_ID
-                    wct.startTask(
-                        taskId,
-                        createActivityOptionsForStartTask(startDesk, desksOrganizer).toBundle(),
-                    )
+                    startPersistedTaskIfPresent(wct, taskId, startDesk)
                 }
             }
 
@@ -3255,6 +3262,29 @@ class DesktopTasksController(
         getHomeTask(displayId)?.let { homeTask ->
             wct.reorder(homeTask.getToken(), /* onTop= */ true)
         }
+    }
+
+    /**
+     * Starts a persisted task only if it is neither already running nor present in recents.
+     * Calling [WindowContainerTransaction.startTask] for a task that no longer exists in WM
+     * makes [WindowOrganizerController.waitAsyncStart] release the global WM lock to run
+     * [startActivityFromRecents], which throws "Task N not found"; during that gap home
+     * becomes resumed and the host sees a foreground flip. Skip those ghosts.
+     */
+    private fun startPersistedTaskIfPresent(
+        wct: WindowContainerTransaction,
+        taskId: Int,
+        deskId: Int,
+    ) {
+        if (shellTaskOrganizer.getRunningTaskInfo(taskId) != null) {
+            return
+        }
+        val recents = recentTasksController
+        if (recents != null && recents.findTaskInBackground(taskId) == null) {
+            logV("skip startTask taskId=%d, not running and not in recents", taskId)
+            return
+        }
+        wct.startTask(taskId, createActivityOptionsForStartTask(deskId, desksOrganizer).toBundle())
     }
 
     private fun removeHomeTask(wct: WindowContainerTransaction, displayId: Int) {
@@ -4280,7 +4310,7 @@ class DesktopTasksController(
                 targetDeskId,
                 requestedTaskBounds,
             )
-        if (bounds != null) {
+        if (bounds != null && bounds != task.configuration.windowConfiguration.bounds) {
             logV("handleFreeformTaskPlacement decided placement bounds to be %s", bounds)
             wct.setBounds(task.token, bounds)
         }
@@ -4736,6 +4766,16 @@ class DesktopTasksController(
         return runOnTransitStart
     }
 
+    /** True when [bounds] is non-empty and fits inside [stableBounds] (width/height ≤, contained). */
+    private fun boundsFitInside(bounds: Rect, stableBounds: Rect): Boolean {
+        if (bounds.isEmpty || stableBounds.isEmpty) {
+            return false
+        }
+        return bounds.width() <= stableBounds.width() &&
+            bounds.height() <= stableBounds.height() &&
+            stableBounds.contains(bounds)
+    }
+
     /**
      * Applies the [wct] changes needed when a task is first moving to a desk.
      *
@@ -4761,14 +4801,26 @@ class DesktopTasksController(
             deskId,
             targetDisplayId,
         )
+        val stableBounds = Rect().also { displayLayout.getStableBoundsForDesktopMode(it) }
+        val currentBounds = Rect(task.configuration.windowConfiguration.bounds)
         val inheritedTaskBounds =
             getInheritedExistingTaskBounds(repository, shellTaskOrganizer, task, deskId)
         if (inheritedTaskBounds != null) {
             // Inherit bounds from closing task instance to prevent application jumping different
             // cascading positions.
             wct.setBounds(task.token, inheritedTaskBounds)
+        } else if (task.isFreeform && boundsFitInside(currentBounds, stableBounds)) {
+            // Already created at the freeform rect. Replacing it with the 72% default is the
+            // fullscreen-to-window shrink in the OPEN transition.
+            logV("addMoveToDeskTaskChanges keep bounds=%s taskId=%d", currentBounds, task.taskId)
         } else {
-            val initialBounds = getInitialBounds(displayLayout, task, deskId)
+            val restore = task.lastNonFullscreenBounds
+            val initialBounds =
+                if (restore != null && boundsFitInside(restore, stableBounds)) {
+                    Rect(restore)
+                } else {
+                    getInitialBounds(displayLayout, task, deskId)
+                }
             wct.setBounds(task.token, initialBounds)
         }
         if (DesktopExperienceFlags.ENABLE_MULTIPLE_DESKTOPS_BACKEND.isTrue) {
@@ -5291,10 +5343,7 @@ class DesktopTasksController(
                 .forEach { taskId ->
                     val runningTaskInfo = shellTaskOrganizer.getRunningTaskInfo(taskId)
                     if (runningTaskInfo == null) {
-                        wct.startTask(
-                            taskId,
-                            createActivityOptionsForStartTask(deskId, desksOrganizer).toBundle(),
-                        )
+                        startPersistedTaskIfPresent(wct, taskId, deskId)
                     } else {
                         desksOrganizer.reorderTaskToFront(wct, deskId, runningTaskInfo)
                     }
