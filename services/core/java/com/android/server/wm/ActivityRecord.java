@@ -5751,13 +5751,6 @@ final class ActivityRecord extends WindowToken {
                     } catch (Exception e) {
                         Slog.w(TAG, "R259 bstNotifyActivityDisplayed failed: " + e);
                     }
-                // Guest ready only. Focus may still be on SystemUI and this window
-                // often cannot receive keys yet. Freeform waits for
-                // bstSendTopDisplayedOnFocusChange.
-                try {
-                    mWmService.bstNotifyActivityDisplayed(this);
-                } catch (Exception e) {
-                    Slog.w(TAG, "R259 bstNotifyActivityDisplayed failed: " + e);
                 }
                 // Fall through.
             case STARTED:
