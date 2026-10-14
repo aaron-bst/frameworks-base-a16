@@ -328,6 +328,12 @@ public class ResolverListAdapter extends BaseAdapter {
         if ((currentResolveList == null) || currentResolveList.isEmpty()) {
             return currentResolveList;
         }
+        // Callers that list every launcher activity (for example the desktop split app
+        // selector) must keep lower-priority matches. filterLowPriority() keeps only the
+        // first priority/isDefault group, which collapses that list to the default home.
+        if (!mResolverListCommunicator.shouldFilterLowPriority()) {
+            return currentResolveList;
+        }
         return mResolverListController.filterLowPriority(
                 currentResolveList, returnCopyOfOriginalListIfModified);
     }
@@ -878,6 +884,13 @@ public class ResolverListAdapter extends BaseAdapter {
          *     {@link android.content.Intent#CATEGORY_DEFAULT} intents
          */
         default boolean shouldGetOnlyDefaultActivities() { return true; };
+
+        /**
+         * @return true to drop matches whose priority or {@code isDefault} differs from the
+         *     top match. App lists that query {@link android.content.Intent#CATEGORY_LAUNCHER}
+         *     should return false so a high-priority home activity does not hide every other app.
+         */
+        default boolean shouldFilterLowPriority() { return true; };
 
         Intent getTargetIntent();
 

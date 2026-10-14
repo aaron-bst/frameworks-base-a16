@@ -312,6 +312,12 @@ class MediaProjectionAppSelectorActivity(
 
     override fun shouldGetOnlyDefaultActivities() = false
 
+    /**
+     * This chooser lists every launcher activity. Keeping only the top priority/isDefault group
+     * hides those apps when the default home combines CATEGORY_LAUNCHER with a higher priority.
+     */
+    override fun shouldFilterLowPriority() = false
+
     override fun shouldShowContentPreview() =
         if (isDesktopSplitSelection) {
             false
@@ -348,6 +354,13 @@ class MediaProjectionAppSelectorActivity(
         // Specify the query intent to show icons for all apps on the chooser screen
         val queryIntent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
         putExtra(Intent.EXTRA_INTENT, queryIntent)
+
+        if (isDesktopSplitSelection) {
+            // A single match must not be started here. Auto-launch goes through
+            // safelyStartActivity() and finish(), which sends RESULT_CANCELED and brings that
+            // activity (the default home) to the front instead of returning it for split.
+            putExtra(Intent.EXTRA_AUTO_LAUNCH_SINGLE_CHOICE, false)
+        }
 
         // Update the title of the chooser
         putExtra(Intent.EXTRA_TITLE, resources.getString(titleResId))

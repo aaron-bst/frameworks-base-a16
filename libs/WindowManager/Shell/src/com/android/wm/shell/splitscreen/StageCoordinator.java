@@ -281,6 +281,21 @@ public class StageCoordinator extends StageCoordinatorAbstract {
     private DefaultMixedHandler mMixedHandler;
     private final Toast mSplitUnsupportedToast;
     private SplitRequest mSplitRequest;
+
+    /**
+     * Desktop caption split launches the selected app after the existing task is already in
+     * split. Kept separate so a cold start is not collected into the transition that brings
+     * the split root forward.
+     */
+    @Nullable private Runnable mPendingDesktopSplitLaunch;
+    @Nullable private IBinder mPendingDesktopSplitTransition;
+    /**
+     * True while {@link #startDesktopIntentAndTask} is reparenting the previous pair out of the
+     * stages. During that window both stages are briefly empty, which
+     * {@link #onChildTaskStatusChanged} would otherwise treat as "split is over" and exit it
+     * before the new pair is launched.
+     */
+    private boolean mClearingSplitForDesktopRelaunch;
     /** Used to notify others of when shell is animating into split screen */
     private SplitScreen.SplitInvocationListener mSplitInvocationListener;
     private Executor mSplitInvocationListenerExecutor;
@@ -1059,6 +1074,183 @@ public class StageCoordinator extends StageCoordinatorAbstract {
 
         startWithTask(wct, taskId, outOptions[0], snapPosition, remoteTransition, instanceId,
                 splitPosition);
+    }
+
+    /**
+     * Desktop caption split: bring the already-running task into split immediately, then launch
+     * the selected app in a following transition.
+     *
+     * <p>Bundling {@code sendPendingIntent} into the same transition as the split-root reorder
+     * holds that transition until the selected app is ready. The app selector finishes in the
+     * meantime and Home covers the desktop. A second request while split is still active also
+     * reuses the old stages, so the new intent often produces no opening change and the enter
+     * animation aborts.
+     */
+    void startDesktopIntentAndTask(PendingIntent pendingIntent, Intent fillInIntent, int taskId,
+            @SplitPosition int splitPosition, @PersistentSnapPosition int snapPosition) {
+        // NOTE: use Slog (not ProtoLog) for new messages here. New ProtoLog strings require the
+        // wmshell.protolog.pb viewer config to be regenerated and pushed alongside the jar;
+        // a stale config throws RuntimeException and crashes SystemUI.
+        Slog.d(TAG, "startDesktopIntentAndTask: intent=" + pendingIntent.getIntent()
+                + " task=" + taskId + " position=" + splitPosition + " snap=" + snapPosition);
+        final WindowContainerTransaction wct = new WindowContainerTransaction();
+        if (isSplitActive()) {
+            // Move the previous pair out of the stages without prepareExitSplitScreen(). That
+            // path marks the "to top" stage fullscreen and exits split state, which is the wrong
+            // outcome when the same transaction starts a new pair.
+            Slog.d(TAG, "startDesktopIntentAndTask: clearing active split stages before a new pair");
+            clearSplitStageTasks(wct);
+        }
+
+        if (DesktopExperienceFlags.ENABLE_NON_DEFAULT_DISPLAY_SPLIT_BUGFIX.isTrue()) {
+            final RunningTaskInfo taskInfo = mTaskOrganizer.getRunningTaskInfo(taskId);
+            if (taskInfo != null) {
+                updateSplitLayoutConfig(mRootTDAOrganizer, taskInfo.displayId, mSplitLayout);
+                prepareMovingSplitScreenRoot(wct, taskInfo.displayId);
+            }
+        }
+
+        // splitPosition is the stage position for the selected app. The existing desktop task
+        // goes to the opposite stage, matching startIntentAndTask().
+        setSideStagePosition(splitPosition, wct);
+        final Bundle mainOptions = new Bundle();
+        final StageTaskListener existingStage;
+        if (enableFlexibleSplit()) {
+            existingStage = mStageOrderOperator.getStageForLegacyPosition(
+                    reverseSplitPosition(splitPosition), true /* checkAllStagesIfNotActive */);
+        } else {
+            existingStage = mMainStage;
+        }
+        addActivityOptions(mainOptions, existingStage);
+        final Bundle[] outOptions = new Bundle[]{mainOptions};
+        prepareTasksForSplitScreen(new int[]{taskId}, wct, outOptions);
+
+        if (!isSplitActive()) {
+            activateSplit(wct, false /* reparentToTop */, SPLIT_INDEX_UNDEFINED);
+        }
+        mSplitLayout.setDivideRatio(snapPosition);
+        mSplitLayout.updateStateWithCurrentPosition();
+        updateWindowBounds(mSplitLayout, wct);
+
+        int displayId = DEFAULT_DISPLAY;
+        final RunningTaskInfo existingTask = mTaskOrganizer.getRunningTaskInfo(taskId);
+        if (existingTask != null) {
+            displayId = existingTask.displayId;
+        }
+        final RunningTaskInfo rootTaskInfo =
+                mSplitMultiDisplayHelper.getDisplayRootTaskInfo(displayId);
+        wct.reorder(rootTaskInfo.token, true);
+        wct.setReparentLeafTaskIfRelaunch(rootTaskInfo.token,
+                false /* reparentLeafTaskIfRelaunch */);
+        setRootForceTranslucent(false, wct);
+        wct.startTask(taskId, outOptions[0]);
+
+        final int intentPosition = splitPosition;
+        final int launchDisplayId = displayId;
+        mPendingDesktopSplitLaunch = () -> launchDesktopSplitIntent(pendingIntent, fillInIntent,
+                intentPosition, snapPosition, launchDisplayId);
+        // Set before the transition is started. Reparenting the old pair empties both stages, and
+        // the resulting onTaskVanished callbacks (which arrive asynchronously, after this method
+        // returns) would otherwise dismiss the split before the new pair is launched.
+        mClearingSplitForDesktopRelaunch = true;
+        // OPEN_TO_SIDE does not require both stages to appear in this transition, so it can
+        // become ready as soon as the existing task is reparented.
+        mPendingDesktopSplitTransition = mSplitTransitions.startEnterTransition(
+                TRANSIT_TO_FRONT, wct, null /* remoteTransition */, this,
+                TRANSIT_SPLIT_SCREEN_OPEN_TO_SIDE, false /* resizeAnim */, snapPosition);
+        if (mPendingDesktopSplitTransition == null) {
+            mPendingDesktopSplitLaunch = null;
+            mClearingSplitForDesktopRelaunch = false;
+            Slog.w(TAG, "Failed to start desktop split transition for task=" + taskId);
+        }
+    }
+
+    /** Starts the app chosen from the desktop split selector once the split root is in front. */
+    private void launchPendingDesktopSplitIntent(IBinder transition) {
+        if (mPendingDesktopSplitLaunch == null || mPendingDesktopSplitTransition == null
+                || !mPendingDesktopSplitTransition.equals(transition)) {
+            return;
+        }
+        final Runnable launch = mPendingDesktopSplitLaunch;
+        mPendingDesktopSplitLaunch = null;
+        mPendingDesktopSplitTransition = null;
+        // HandlerExecutor.execute() runs inline on the shell thread. This callback is still
+        // inside onFinish(), before mPendingEnter is cleared, so an inline startEnterTransition()
+        // is dropped. postDelayed always queues.
+        mMainExecutor.executeDelayed(launch, 0);
+    }
+
+    private boolean splitStagesHaveChildren() {
+        if (enableFlexibleSplit()) {
+            return mStageOrderOperator.getActiveStages().stream()
+                    .anyMatch(stage -> stage.getChildCount() > 0);
+        }
+        return mMainStage.getChildCount() > 0 || mSideStage.getChildCount() > 0;
+    }
+
+    /** Reparents every child of the active stages back to the display area. */
+    private void clearSplitStageTasks(WindowContainerTransaction wct) {
+        // removeAllTasks() reparents with null windowingModes, which would leave the tasks in
+        // WINDOWING_MODE_MULTI_WINDOW on the display area. Reset to UNDEFINED so they inherit the
+        // display's mode (freeform in desktop mode) and behave as normal desktop windows.
+        if (enableFlexibleSplit()) {
+            mStageOrderOperator.getActiveStages().forEach(stage -> {
+                stage.doForAllChildTaskInfos(taskInfo ->
+                        wct.setWindowingMode(taskInfo.token, WINDOWING_MODE_UNDEFINED));
+                stage.removeAllTasks(wct, false /* toTop */,
+                        getNewParentTokenForStage(stage, mRootTDAOrganizer));
+            });
+            return;
+        }
+        mMainStage.doForAllChildTaskInfos(taskInfo ->
+                wct.setWindowingMode(taskInfo.token, WINDOWING_MODE_UNDEFINED));
+        mMainStage.removeAllTasks(wct, false /* toTop */,
+                getNewParentTokenForStage(mMainStage, mRootTDAOrganizer));
+        mSideStage.doForAllChildTaskInfos(taskInfo ->
+                wct.setWindowingMode(taskInfo.token, WINDOWING_MODE_UNDEFINED));
+        mSideStage.removeAllTasks(wct, false /* toTop */,
+                getNewParentTokenForStage(mSideStage, mRootTDAOrganizer));
+    }
+
+    private void launchDesktopSplitIntent(PendingIntent pendingIntent, Intent fillInIntent,
+            @SplitPosition int intentPosition, @PersistentSnapPosition int snapPosition,
+            int displayId) {
+        // Leave mClearingSplitForDesktopRelaunch set. This runnable is posted at the end of the
+        // first transition, and an onTaskVanished for the previous pair can still be queued
+        // behind it. Dropping the guard here lets that callback dismiss the split before the
+        // replacement task is recorded as a stage child.
+        if (!isSplitActive()) {
+            mClearingSplitForDesktopRelaunch = false;
+            Slog.w(TAG, "launchDesktopSplitIntent: split inactive, skipping selected app launch");
+            return;
+        }
+        final WindowContainerTransaction wct = new WindowContainerTransaction();
+        final Bundle options = new Bundle();
+        final StageTaskListener intentStage;
+        if (enableFlexibleSplit()) {
+            intentStage = mStageOrderOperator.getStageForLegacyPosition(intentPosition,
+                    false /* checkAllStagesIfNotActive */);
+        } else {
+            intentStage = mSideStagePosition == intentPosition ? mSideStage : mMainStage;
+        }
+        addActivityOptions(options, intentStage);
+        if (DesktopExperienceFlags.ENABLE_NON_DEFAULT_DISPLAY_SPLIT_BUGFIX.isTrue()) {
+            updateSplitLayoutConfig(mRootTDAOrganizer, displayId, mSplitLayout);
+            prepareMovingSplitScreenRoot(wct, displayId);
+        }
+        wct.sendPendingIntent(pendingIntent, fillInIntent, options);
+        final IBinder launched = mSplitTransitions.startEnterTransition(TRANSIT_TO_FRONT, wct,
+                null /* remoteTransition */, this, TRANSIT_SPLIT_SCREEN_OPEN_TO_SIDE,
+                false /* resizeAnim */, snapPosition);
+        if (launched == null) {
+            Slog.w(TAG, "Failed to launch selected app into desktop split");
+        }
+    }
+
+    private void clearPendingDesktopSplitIntent() {
+        mPendingDesktopSplitLaunch = null;
+        mPendingDesktopSplitTransition = null;
+        mClearingSplitForDesktopRelaunch = false;
     }
 
     /**
@@ -2364,6 +2556,11 @@ public class StageCoordinator extends StageCoordinatorAbstract {
         }
         if (present) {
             updateRecentTasksSplitPair();
+            // The replacement task is now in a stage, so a later "both stages empty" is a real
+            // exit again rather than the gap while the previous pair is reparented out.
+            if (mClearingSplitForDesktopRelaunch && splitStagesHaveChildren()) {
+                mClearingSplitForDesktopRelaunch = false;
+            }
         } else {
             // TODO (b/349828130): Test b/333270112 for flex split (launch adjacent for flex
             //  currently not working)
@@ -2377,7 +2574,14 @@ public class StageCoordinator extends StageCoordinatorAbstract {
                     // to splits in the recents until we enter split again.
                     recentTasks.removeSplitPair(taskId);
                 });
-                dismissSplitScreen(INVALID_TASK_ID, EXIT_REASON_ROOT_TASK_VANISHED);
+                if (mClearingSplitForDesktopRelaunch) {
+                    // The stages were emptied on purpose to start a new desktop split pair.
+                    // Keep the split active so the replacement task can reuse it.
+                    Slog.d(TAG, "onChildTaskStatusChanged: stages empty during desktop relaunch, "
+                            + "keeping split active");
+                } else {
+                    dismissSplitScreen(INVALID_TASK_ID, EXIT_REASON_ROOT_TASK_VANISHED);
+                }
             }
         }
 
@@ -3672,7 +3876,17 @@ public class StageCoordinator extends StageCoordinatorAbstract {
     public void onTransitionConsumed(@NonNull IBinder transition, boolean aborted,
             @Nullable SurfaceControl.Transaction finishT) {
         ProtoLog.d(WM_SHELL_SPLIT_SCREEN, "onTransitionConsumed");
+        final boolean desktopEnter = mPendingDesktopSplitTransition != null
+                && mPendingDesktopSplitTransition.equals(transition);
         mSplitTransitions.onTransitionConsumed(transition, aborted, finishT);
+        if (!desktopEnter) {
+            return;
+        }
+        if (aborted) {
+            clearPendingDesktopSplitIntent();
+        } else {
+            launchPendingDesktopSplitIntent(transition);
+        }
     }
 
     @Override
@@ -4117,6 +4331,7 @@ public class StageCoordinator extends StageCoordinatorAbstract {
                 Log.w(TAG, splitFailureMessage("startPendingEnterAnimation",
                         "Launched a task in split, but didn't receive any task in transition."));
                 // This should happen when the target app is already on front, so just cancel.
+                clearPendingDesktopSplitIntent();
                 pendingEnter.cancel(null);
                 return true;
             }
@@ -4124,6 +4339,7 @@ public class StageCoordinator extends StageCoordinatorAbstract {
             if (mainChild == null || sideChild == null) {
                 final int dismissTop = mainChild != null ? STAGE_TYPE_MAIN :
                         (sideChild != null ? STAGE_TYPE_SIDE : STAGE_TYPE_UNDEFINED);
+                clearPendingDesktopSplitIntent();
                 pendingEnter.cancel(
                         (cancelWct, cancelT) -> {
                             prepareExitSplitScreen(dismissTop, cancelWct, EXIT_REASON_UNKNOWN);
@@ -4225,6 +4441,7 @@ public class StageCoordinator extends StageCoordinatorAbstract {
             if (enableFlexibleTwoAppSplit()) {
                 grantFocusForSnapPosition(enterTransition.mEnteringPosition);
             }
+            launchPendingDesktopSplitIntent(transition);
         });
 
         if (info.getType() == TRANSIT_CHANGE && !isSplitActive()

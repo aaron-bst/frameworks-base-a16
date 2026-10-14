@@ -634,7 +634,7 @@ public class SplitScreenController implements SplitDragPolicy.Starter,
             @SplitPosition int taskPosition) {
         startIntentAndTask(pendingIntent, userId, /* options1= */ null, taskId,
                 /* options2= */ null, reverseSplitPosition(taskPosition), SNAP_TO_2_50_50,
-                /* remoteTransition= */ null, /* instanceId= */ null);
+                /* remoteTransition= */ null, /* instanceId= */ null, /* desktopSplit= */ true);
     }
 
     /**
@@ -792,6 +792,15 @@ public class SplitScreenController implements SplitDragPolicy.Starter,
             @Nullable Bundle options1, int taskId, @Nullable Bundle options2,
             @SplitPosition int splitPosition, @PersistentSnapPosition int snapPosition,
             @Nullable RemoteTransition remoteTransition, InstanceId instanceId) {
+        startIntentAndTask(pendingIntent, userId1, options1, taskId, options2, splitPosition,
+                snapPosition, remoteTransition, instanceId, /* desktopSplit= */ false);
+    }
+
+    private void startIntentAndTask(PendingIntent pendingIntent, int userId1,
+            @Nullable Bundle options1, int taskId, @Nullable Bundle options2,
+            @SplitPosition int splitPosition, @PersistentSnapPosition int snapPosition,
+            @Nullable RemoteTransition remoteTransition, InstanceId instanceId,
+            boolean desktopSplit) {
         Intent fillInIntent = null;
         final String packageName1 = ComponentUtils.getPackageName(pendingIntent);
         // NOTE: This doesn't correctly pull out packageName2 if taskId is referring to a task in
@@ -820,6 +829,11 @@ public class SplitScreenController implements SplitDragPolicy.Starter,
         if (options2 != null) {
             Intent widgetIntent = options2.getParcelable(KEY_EXTRA_WIDGET_INTENT, Intent.class);
             fillInIntent = resolveWidgetFillinIntent(widgetIntent, setSecondIntentMultipleTask);
+        }
+        if (desktopSplit && taskId != INVALID_TASK_ID) {
+            mStageCoordinator.startDesktopIntentAndTask(pendingIntent, fillInIntent, taskId,
+                    splitPosition, snapPosition);
+            return;
         }
         mStageCoordinator.startIntentAndTask(pendingIntent, fillInIntent, options1, taskId,
                 options2, splitPosition, snapPosition, remoteTransition, instanceId);

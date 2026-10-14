@@ -1702,6 +1702,11 @@ public class ResolverActivity extends Activity implements
         return false;
     }
 
+    @Override // ResolverListCommunicator
+    public boolean shouldFilterLowPriority() {
+        return true;
+    }
+
     public boolean shouldAutoLaunchSingleChoice(TargetInfo target) {
         return !target.isSuspended();
     }
