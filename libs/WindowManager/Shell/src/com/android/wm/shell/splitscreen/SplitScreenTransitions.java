@@ -176,6 +176,12 @@ class SplitScreenTransitions {
                 mFinishTransaction.setPosition(leash,
                         change.getEndRelOffset().x, change.getEndRelOffset().y);
                 mFinishTransaction.setCrop(leash, null);
+                // A cold-started app has no snapshot. Show its leash now so the starting
+                // window is visible instead of leaving the stage black until the first draw.
+                if (TransitionUtil.isOpeningMode(mode)) {
+                    t.show(leash);
+                    t.setAlpha(leash, 1.f);
+                }
             } else if (isTopRoot) {
                 // Ensure top root is visible at start.
                 t.setAlpha(leash, 1.f);
@@ -184,6 +190,10 @@ class SplitScreenTransitions {
                 t.setPosition(leash, change.getEndAbsBounds().left, change.getEndAbsBounds().top);
                 t.setWindowCrop(leash, change.getEndAbsBounds().width(),
                         change.getEndAbsBounds().height());
+                if (isEnter) {
+                    t.show(leash);
+                    t.setAlpha(leash, 1.f);
+                }
             } else if (isDivider) {
                 t.setPosition(leash, change.getEndAbsBounds().left, change.getEndAbsBounds().top);
                 t.setLayer(leash, Integer.MAX_VALUE);
