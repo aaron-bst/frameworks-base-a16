@@ -16,7 +16,10 @@
 package com.android.wm.shell.desktopmode.multidesks
 
 import android.app.ActivityTaskManager.INVALID_TASK_ID
+import android.app.WindowConfiguration.ACTIVITY_TYPE_HOME
+import android.app.WindowConfiguration.ACTIVITY_TYPE_STANDARD
 import android.os.IBinder
+import android.os.SystemProperties
 import android.os.Trace
 import android.view.Display.INVALID_DISPLAY
 import android.view.WindowManager.TRANSIT_CHANGE
@@ -330,6 +333,13 @@ class DesksTransitionObserver(
         val openingUserIds = mutableListOf<Int>()
         var hasSeenOpeningTask = false
         val desksToActivate = mutableListOf<Int>()
+        // BS-A16: whether this transition brings the home task to the front (tapping the
+        // desktop, which is the home screen). Must be scanned before the loop: the desk's
+        // TO_BACK change can be reported before the home change.
+        val hasHomeToTop = info.taskChanges().any { change ->
+            change.isOpeningOrToTop() &&
+                change.taskInfo?.activityType == ACTIVITY_TYPE_HOME
+        }
         // Visit all task changes, not just desk/wallpaper changes because we're interested in
         // capturing user ids of showing tasks (such as Home) to detect user switches.
         for (change in info.taskChanges()) {
@@ -349,6 +359,22 @@ class DesksTransitionObserver(
                 hasSeenOpeningTask = true
             }
             if (change !in deskChanges && change !in desktopWallpaperChanges) {
+                // BS-A16: home came to the front and WM core moved an app task behind it.
+                // In BlueStacks desktop mode the windows must stay on top of the home screen
+                // (z-order only, no focus change) or they look gone. This covers transitions
+                // that report the task directly, even when its desk root is not in changes.
+                if (
+                    hasHomeToTop &&
+                        change.isToBack() &&
+                        taskInfo.activityType == ACTIVITY_TYPE_STANDARD &&
+                        SystemProperties.getInt("bst.freeform_launch", 0) > 0
+                ) {
+                    logD(
+                        "taskId=%d moved behind home (BS desktop mode), keeping it on top",
+                        taskId,
+                    )
+                    change.container?.let { wct.reorder(it, /* onTop= */ true) }
+                }
                 logD("Not desk or wallpaper, skipping")
                 continue
             }
@@ -477,6 +503,22 @@ class DesksTransitionObserver(
             )
             when {
                 change.isToBack() -> {
+                    if (
+                        hasHomeToTop &&
+                            SystemProperties.getInt("bst.freeform_launch", 0) > 0
+                    ) {
+                        // BS-A16: home-behind-desktop — tapping the desktop (the home screen)
+                        // focused home and WM core moved the desk and its tasks behind it.
+                        // Keep the desk active and on top of home so the windows stay visible;
+                        // the tasks themselves are reordered by the app-task protection in the
+                        // loop above, which runs for them regardless of this branch.
+                        logD(
+                            "desk=%d moved behind home (BS desktop mode), keeping it active",
+                            deskId,
+                        )
+                        desksOrganizer.activateDesk(wct, deskId, skipReorder = false)
+                        continue
+                    }
                     if (
                         !hasSeenOpeningTask &&
                             DesktopExperienceFlags.SKIP_DEACTIVATION_OF_DESK_WITH_NOTHING_IN_FRONT

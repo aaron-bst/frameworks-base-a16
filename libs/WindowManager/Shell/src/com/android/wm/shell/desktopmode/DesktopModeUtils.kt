@@ -525,7 +525,12 @@ fun decideDesktopTaskPlacementBounds(
     // TODO: b/365723620 - Handle non running tasks that were launched after reboot.
     // If task is already visible, it must have been handled already and added to desktop mode.
     // Cascade task only if it's not visible yet.
-    if (DesktopModeFlags.ENABLE_CASCADING_WINDOWS.isTrue() && !isVisible) {
+    // BS-A16: skip cascading when the caller already placed this window (a task launched with
+    // caller bounds carries them in lastNonFullscreenBounds, which equals the current bounds) —
+    // cascading shifts a caller-chosen centered window off-center.
+    val launchBounds = task.lastNonFullscreenBounds
+    val callerPlaced = launchBounds != null && !launchBounds.isEmpty && launchBounds == currentBounds
+    if (DesktopModeFlags.ENABLE_CASCADING_WINDOWS.isTrue() && !isVisible && !callerPlaced) {
         if (displayLayout != null && !stableBounds.isEmpty) {
             val initialBounds = Rect(currentBounds)
             cascadeWindow(

@@ -4766,6 +4766,27 @@ class DesktopTasksController(
         return runOnTransitStart
     }
 
+    /** BS-A16: fixed-portrait, non-resizable and never placed — the heuristic would shrink it. */
+    private fun isFirstLaunchPortraitNonResizable(task: RunningTaskInfo): Boolean {
+        val top = task.topActivityInfo ?: return false
+        return !task.isResizeable &&
+            android.content.pm.ActivityInfo.isFixedOrientationPortrait(top.screenOrientation)
+    }
+
+    /** BS-A16: the launcher-style portrait window (9:16, 340dp width floor, centered), or null. */
+    private fun bsPortraitInitialBounds(displayLayout: DisplayLayout, stableBounds: Rect): Rect? {
+        val density = displayLayout.densityDpi() / 160f
+        if (density <= 0f) return null
+        val margin = (108 * density).toInt()   // breathing room above the taskbar
+        val h = (stableBounds.height() - margin).coerceAtLeast((220 * density).toInt())
+        val wFloor =
+            (340 * density).toInt().coerceAtMost(stableBounds.width() - (16 * density).toInt())
+        val w = (h * 9 / 16).coerceAtMost(stableBounds.width() / 2).coerceAtLeast(wFloor)
+        val x = stableBounds.centerX() - w / 2
+        val y = stableBounds.centerY() - h / 2
+        return Rect(x, y, x + w, y + h)
+    }
+
     /** True when [bounds] is non-empty and fits inside [stableBounds] (width/height ≤, contained). */
     private fun boundsFitInside(bounds: Rect, stableBounds: Rect): Boolean {
         if (bounds.isEmpty || stableBounds.isEmpty) {
@@ -4818,6 +4839,14 @@ class DesktopTasksController(
             val initialBounds =
                 if (restore != null && boundsFitInside(restore, stableBounds)) {
                     Rect(restore)
+                } else if (isFirstLaunchPortraitNonResizable(task)) {
+                    // BS-A16: first launch of a fixed-portrait non-resizable app. The app's
+                    // aspect ratio is not known yet (topNonResizableActivityAspectRatio is -1),
+                    // so the initial-bounds heuristic computes a shrinking narrow window. Use
+                    // the same 9:16 display-fitted window the launcher requests (340dp width
+                    // floor so the caption window controls stay visible), centered.
+                    bsPortraitInitialBounds(displayLayout, stableBounds)
+                        ?: getInitialBounds(displayLayout, task, deskId)
                 } else {
                     getInitialBounds(displayLayout, task, deskId)
                 }

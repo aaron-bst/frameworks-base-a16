@@ -104,6 +104,36 @@ class DesktopActivityOrientationChangeHandler(
                     ActivityInfo.isFixedOrientationPortrait(requestedOrientation)
         ) {
             val displayLayout = displayController.getDisplayLayout(task.displayId) ?: return
+            val launchBounds = task.lastNonFullscreenBounds
+            if (launchBounds != null && !launchBounds.isEmpty) {
+                // BS-A16: the caller (the launcher opens portrait games in portrait windows
+                // sized for this display) already recorded the intended window in
+                // lastNonFullscreenBounds. Apply it as-is instead of the initial-bounds
+                // heuristic, which runs before the app's aspect is known and computes
+                // shrinking windows round over round.
+                val wct = WindowContainerTransaction().setBounds(task.token, Rect(launchBounds))
+                resizeHandler.startTransition(wct)
+                return
+            }
+            // BS-A16: no recorded bounds yet (the task is being launched fullscreen): fall back
+            // to the same portrait window the launcher itself would request — 9:16 with a
+            // 340dp width floor so the caption window-control buttons stay visible, centered
+            // on the display — instead of the aspect heuristic, which produces a much smaller
+            // window for the first portrait app launched.
+            val stable = Rect().also { displayLayout.getStableBoundsForDesktopMode(it) }
+            val density = displayLayout.densityDpi() / 160f
+            if (!stable.isEmpty && density > 0f) {
+                val margin = (108 * density).toInt()   // breathing room above the taskbar
+                val h = (stable.height() - margin).coerceAtLeast((220 * density).toInt())
+                val wFloor = (340 * density).toInt().coerceAtMost(stable.width() - (16 * density).toInt())
+                val w = (h * 9 / 16).coerceAtMost(stable.width() / 2).coerceAtLeast(wFloor)
+                val x = stable.centerX() - w / 2
+                val y = stable.centerY() - h / 2
+                resizeHandler.startTransition(
+                    WindowContainerTransaction()
+                        .setBounds(task.token, Rect(x, y, x + w, y + h)))
+                return
+            }
             val captionInsets =
                 task.configuration.windowConfiguration.appBounds?.let {
                     it.top - task.configuration.windowConfiguration.bounds.top

@@ -546,7 +546,10 @@ class AppHeaderViewHolder(
         maximizeWindowButton.imageTintList = ColorStateList.valueOf(color)
         minimizeWindowButton.imageTintList = ColorStateList.valueOf(color)
         expandMenuButton.imageTintList = ColorStateList.valueOf(color)
-        appNameTextView.isVisible = !taskInfo.isTransparentCaptionBarAppearance
+        // BS-A16: the compact header shows no app name — the app icon and the dropdown arrow
+        // (which opens the app menu) carry the identity, keeping the window-control buttons
+        // visible at any window width.
+        appNameTextView.isVisible = false
         appNameTextView.setTextColor(color)
         appIconImageView.imageAlpha = alpha
         maximizeWindowButton.imageAlpha = alpha
@@ -616,7 +619,8 @@ class AppHeaderViewHolder(
             expandMenuErrorImageView.visibility =
                 if (isRestartMenuEnabledForDisplayMove) View.VISIBLE else View.GONE
             appNameTextView.apply {
-                isVisible = header.type == Header.Type.DEFAULT
+                // BS-A16: no app name in the compact header (see bindDataLegacy).
+                isVisible = false
                 setTextColor(colorStateList)
                 maxWidth =
                     if (isRestartMenuEnabledForDisplayMove) {
