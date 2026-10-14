@@ -1946,6 +1946,11 @@ public abstract class OomAdjuster {
         if (app.hasActiveInstrumentation()) {
             return CPU_TIME_REASON_OTHER;
         }
+        if (app.getHasInputConsumer()) {
+            // InputDispatcher blocks on this process's input channels. A touch does not
+            // unfreeze the target, so the process must already be runnable.
+            return CPU_TIME_REASON_OTHER;
+        }
         // TODO(b/370817323): Populate this method with all of the reasons to keep a process
         //  unfrozen.
         return CPU_TIME_REASON_NONE;

@@ -108,6 +108,13 @@ public abstract class ProcessRecordInternal {
         void onHasOverlayUiChanged(boolean hasOverlayUi);
 
         /**
+         * Called when mHasInputConsumer changes.
+         *
+         * @param hasInputConsumer The new mHasInputConsumer value.
+         */
+        void onHasInputConsumerChanged(boolean hasInputConsumer);
+
+        /**
          * Called when mInteractionEventTime changes.
          *
          * @param interactionEventTime The new mInteractionEventTime value.
@@ -597,6 +604,16 @@ public abstract class ProcessRecordInternal {
      */
     @GuardedBy("mServiceLock")
     private boolean mHasOverlayUi;
+
+    /**
+     * Does this process own an input channel that InputDispatcher may block on, such as a
+     * {@link android.view.WindowManager.LayoutParams#TYPE_SCREENSHOT} window? When true the
+     * process stays at {@code ProcessList#PERCEPTIBLE_APP_ADJ} and is granted
+     * {@code PROCESS_CAPABILITY_CPU_TIME}, so the freezer does not stop it while that channel
+     * is live. This is not overlay UI and must not be reported via {@link #mHasOverlayUi}.
+     */
+    @GuardedBy("mServiceLock")
+    private boolean mHasInputConsumer;
 
     /**
      * Is the process currently running a remote animation? When true
@@ -1247,6 +1264,18 @@ public abstract class ProcessRecordInternal {
     @GuardedBy("mServiceLock")
     public boolean getHasOverlayUi() {
         return mHasOverlayUi;
+    }
+
+    /** Sets whether this process owns a blocking input channel, and notifies the observer. */
+    @GuardedBy("mServiceLock")
+    public void setHasInputConsumer(boolean hasInputConsumer) {
+        mHasInputConsumer = hasInputConsumer;
+        mObserver.onHasInputConsumerChanged(mHasInputConsumer);
+    }
+
+    @GuardedBy("mServiceLock")
+    public boolean getHasInputConsumer() {
+        return mHasInputConsumer;
     }
 
     @GuardedBy("mServiceLock")
@@ -1947,9 +1976,11 @@ public abstract class ProcessRecordInternal {
             pw.print(prefix); pw.print("serviceb="); pw.print(mServiceB);
             pw.print(" serviceHighRam="); pw.println(mServiceHighRam);
         }
-        if (getHasTopUi() || getHasOverlayUi() || mRunningRemoteAnimation) {
+        if (getHasTopUi() || getHasOverlayUi() || getHasInputConsumer()
+                || mRunningRemoteAnimation) {
             pw.print(prefix); pw.print("hasTopUi="); pw.print(getHasTopUi());
             pw.print(" hasOverlayUi="); pw.print(getHasOverlayUi());
+            pw.print(" hasInputConsumer="); pw.print(getHasInputConsumer());
             pw.print(" runningRemoteAnimation="); pw.println(mRunningRemoteAnimation);
         }
         if (mHasForegroundActivities || mRepForegroundActivities) {

@@ -43,6 +43,7 @@ import static android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION;
 import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD;
 import static android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG;
 import static android.view.WindowManager.LayoutParams.TYPE_NOTIFICATION_SHADE;
+import static android.view.WindowManager.LayoutParams.TYPE_SCREENSHOT;
 import static android.view.WindowManager.LayoutParams.TYPE_TOAST;
 import static android.view.flags.Flags.FLAG_SENSITIVE_CONTENT_APP_PROTECTION;
 import static android.window.DisplayAreaOrganizer.FEATURE_VENDOR_FIRST;
@@ -316,6 +317,30 @@ public class WindowManagerServiceTests extends WindowTestsBase {
         verify(session).setHasOverlayUi(true);
         session.onWindowSurfaceVisibilityChanged(window, false /* visible */);
         verify(session).setHasOverlayUi(false);
+    }
+
+    @Test
+    public void testTrackScreenshotInputConsumer() {
+        final WindowProcessController wpc = mSystemServicesTestRule.addProcess(
+                "pkgName", "processName", 1000 /* pid */, Process.SYSTEM_UID);
+        final Session session = createTestSession(mAtm, wpc.getPid(), wpc.mUid);
+        spyOn(session);
+        final WindowState first = newWindowBuilder("ScreenshotUI", TYPE_SCREENSHOT).build();
+        final WindowState second = newWindowBuilder("ScreenshotUI-2", TYPE_SCREENSHOT).build();
+
+        session.onWindowSurfaceVisibilityChanged(first, true /* visible */);
+        session.onWindowSurfaceVisibilityChanged(second, true /* visible */);
+        verify(session, times(2)).setHasInputConsumer(true);
+        verify(session, never()).setHasInputConsumer(false);
+        verify(session, never()).setHasOverlayUi(anyBoolean());
+
+        // One remaining screenshot window must keep the process unfrozen.
+        session.onWindowSurfaceVisibilityChanged(first, false /* visible */);
+        verify(session, never()).setHasInputConsumer(false);
+
+        session.onWindowSurfaceVisibilityChanged(second, false /* visible */);
+        verify(session).setHasInputConsumer(false);
+        verify(session, never()).setHasOverlayUi(anyBoolean());
     }
 
     @Test
