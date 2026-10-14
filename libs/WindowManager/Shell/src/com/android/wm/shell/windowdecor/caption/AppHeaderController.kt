@@ -740,7 +740,9 @@ class AppHeaderController(
         stableBounds.bottom - requiredEmptySpace
 
     override fun getCaptionHeight(): Int =
-        context.resources.getDimensionPixelSize(getDesktopViewAppHeaderHeightId()) +
+        // BS-A16: read from the Shell package so a SystemUI-only update applies the compact
+        // header height; the framework-res default only lands with a full image build.
+        context.resources.getDimensionPixelSize(R.dimen.desktop_mode_app_header_height_bs) +
             getCaptionTopPadding()
 
     override fun getCaptionWidth(): Int =
