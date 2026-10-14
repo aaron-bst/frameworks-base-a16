@@ -35,6 +35,7 @@ import static android.content.Intent.EXTRA_TASK_ID;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
 import static android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+import static android.view.WindowManager.LayoutParams.TYPE_SCREENSHOT;
 import static android.view.WindowManager.LayoutParams.TYPE_SYSTEM_DIALOG;
 import static android.view.WindowManager.LayoutParams.isSystemAlertWindowType;
 
@@ -112,6 +113,8 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
     private final ArrayList<WindowState> mAddedWindows = new ArrayList<>();
     /** Set of visible alert/app-overlay windows connected to this session. */
     private final ArraySet<WindowState> mAlertWindows = new ArraySet<>();
+    /** Visible TYPE_SCREENSHOT windows. Their input channels must keep the process unfrozen. */
+    private final ArraySet<WindowState> mInputConsumerWindows = new ArraySet<>();
     private final DragDropController mDragDropController;
     final boolean mCanAddInternalSystemWindow;
     boolean mCanForceShowingInsets;
@@ -779,6 +782,17 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
 
     void onWindowSurfaceVisibilityChanged(WindowState window, boolean visible) {
         final int type = window.mAttrs.type;
+        if (type == TYPE_SCREENSHOT) {
+            // The gesture monitor is created and disposed with this window's view, so the
+            // surface lifetime covers both input channels InputDispatcher waits on.
+            final boolean changed = visible
+                    ? mInputConsumerWindows.add(window)
+                    : mInputConsumerWindows.remove(window);
+            if (changed && mPid != WindowManagerService.MY_PID) {
+                setHasInputConsumer(!mInputConsumerWindows.isEmpty());
+            }
+            return;
+        }
         if (!isSystemAlertWindowType(type) && type != TYPE_SYSTEM_DIALOG) {
             return;
         }
@@ -860,13 +874,21 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
         mProcess.mWindowSession = null;
         mAddedWindows.clear();
         mAlertWindows.clear();
+        mInputConsumerWindows.clear();
         setHasOverlayUi(false);
+        setHasInputConsumer(false);
         cancelAlertWindowNotification();
     }
 
     @VisibleForTesting
     void setHasOverlayUi(boolean hasOverlayUi) {
         mService.mH.obtainMessage(H.SET_HAS_OVERLAY_UI, mPid, hasOverlayUi ? 1 : 0).sendToTarget();
+    }
+
+    @VisibleForTesting
+    void setHasInputConsumer(boolean hasInputConsumer) {
+        mService.mH.obtainMessage(H.SET_HAS_INPUT_CONSUMER, mPid, hasInputConsumer ? 1 : 0)
+                .sendToTarget();
     }
 
     private void cancelAlertWindowNotification() {
@@ -881,6 +903,7 @@ class Session extends IWindowSession.Stub implements IBinder.DeathRecipient {
         pw.print(prefix); pw.print("numWindow="); pw.print(mAddedWindows.size());
                 pw.print(" mCanAddInternalSystemWindow="); pw.print(mCanAddInternalSystemWindow);
                 pw.print(" mAlertWindows="); pw.print(mAlertWindows);
+                pw.print(" mInputConsumerWindows="); pw.print(mInputConsumerWindows);
                 pw.print(" mClientDead="); pw.print(mClientDead);
         pw.print(prefix); pw.print("mPackageName="); pw.println(mPackageName);
         if (isSatellitePointingUiPackage()) {

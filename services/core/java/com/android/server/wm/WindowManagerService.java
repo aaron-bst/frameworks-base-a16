@@ -6153,6 +6153,7 @@ public class WindowManagerService extends IWindowManager.Stub
         public static final int UPDATE_ANIMATION_SCALE = 51;
         public static final int WINDOW_HIDE_TIMEOUT = 52;
         public static final int SET_HAS_OVERLAY_UI = 58;
+        public static final int SET_HAS_INPUT_CONSUMER = 59;
         public static final int RECOMPUTE_FOCUS = 61;
         public static final int ON_POINTER_DOWN_OUTSIDE_FOCUS = 62;
         public static final int WINDOW_STATE_BLAST_SYNC_TIMEOUT = 64;
@@ -6371,6 +6372,10 @@ public class WindowManagerService extends IWindowManager.Stub
                 }
                 case SET_HAS_OVERLAY_UI: {
                     mAmInternal.setHasOverlayUi(msg.arg1, msg.arg2 == 1);
+                    break;
+                }
+                case SET_HAS_INPUT_CONSUMER: {
+                    mAmInternal.setHasInputConsumer(msg.arg1, msg.arg2 == 1);
                     break;
                 }
                 case RECOMPUTE_FOCUS: {

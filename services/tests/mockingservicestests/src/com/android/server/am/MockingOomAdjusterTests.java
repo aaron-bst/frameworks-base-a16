@@ -1217,6 +1217,28 @@ public class MockingOomAdjusterTests {
 
     @SuppressWarnings("GuardedBy")
     @Test
+    @EnableFlags(Flags.FLAG_CPU_TIME_CAPABILITY_BASED_FREEZE_POLICY)
+    public void testUpdateOomAdj_DoOne_InputConsumer() {
+        ProcessRecord app = makeDefaultProcessRecord(MOCKAPP_PID, MOCKAPP_UID, MOCKAPP_PROCESSNAME,
+                MOCKAPP_PACKAGENAME, true);
+        mProcessStateController.setHasInputConsumer(app, true);
+        setWakefulness(PowerManagerInternal.WAKEFULNESS_AWAKE);
+        updateOomAdj(app);
+
+        assertProcStates(app, PROCESS_STATE_IMPORTANT_FOREGROUND, PERCEPTIBLE_APP_ADJ,
+                SCHED_GROUP_DEFAULT, "input-consumer");
+        assertFalse(app.getHasOverlayUi());
+        assertThatProcess(app).hasCpuTimeCapability().withExactReasons(CPU_TIME_REASON_OTHER);
+        assertFalse(OomAdjuster.getFreezePolicy(app));
+
+        mProcessStateController.setHasInputConsumer(app, false);
+        updateOomAdj(app);
+        assertThatProcess(app).notHasCpuTimeCapability();
+        assertTrue(OomAdjuster.getFreezePolicy(app));
+    }
+
+    @SuppressWarnings("GuardedBy")
+    @Test
     public void testUpdateOomAdj_DoOne_PerceptibleRecent_FgService() {
         ProcessRecord app = makeDefaultProcessRecord(MOCKAPP_PID, MOCKAPP_UID, MOCKAPP_PROCESSNAME,
                 MOCKAPP_PACKAGENAME, true);

@@ -197,6 +197,9 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     // oom adj score will be set to ProcessList#PERCEPTIBLE_APP_ADJ at minimum to reduce the chance
     // of the process getting killed.
     private volatile boolean mHasOverlayUi;
+    // Owns an input channel InputDispatcher may block on (for example TYPE_SCREENSHOT).
+    // Kept in sync so the process is not frozen while that channel is live.
+    private volatile boolean mHasInputConsumer;
     // Want to clean up resources from showing UI?
     private volatile boolean mPendingUiClean;
     // The time we sent the last interaction event
@@ -542,6 +545,10 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
 
     boolean hasOverlayUi() {
         return mHasOverlayUi;
+    }
+
+    boolean hasInputConsumer() {
+        return mHasInputConsumer;
     }
 
     public void setPendingUiClean(boolean hasPendingUiClean) {
@@ -2095,6 +2102,11 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
     }
 
     @Override
+    public void onHasInputConsumerChanged(boolean hasInputConsumer) {
+        mHasInputConsumer = hasInputConsumer;
+    }
+
+    @Override
     public void onInteractionEventTimeChanged(long interactionEventTime) {
         mInteractionEventTime = interactionEventTime;
     }
@@ -2282,6 +2294,9 @@ public class WindowProcessController extends ConfigurationContainer<Configuratio
         }
         if (mUseFifoUiScheduling) {
             pw.println(prefix + " mUseFifoUiScheduling=true");
+        }
+        if (hasInputConsumer()) {
+            pw.println(prefix + " mHasInputConsumer=true");
         }
 
         final int stateFlags = mActivityStateFlags;

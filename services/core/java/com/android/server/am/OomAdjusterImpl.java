@@ -1329,7 +1329,7 @@ public class OomAdjusterImpl extends OomAdjuster {
         final boolean hasShortForegroundServices = hasForegroundServices
                 && !psr.areAllShortForegroundServicesProcstateTimedOut(now);
 
-        // Adjust for FGS or "has-overlay-ui".
+        // Adjust for FGS, "has-overlay-ui", or "input-consumer".
         if (adj > PERCEPTIBLE_APP_ADJ
                 || procState > PROCESS_STATE_FOREGROUND_SERVICE) {
             String adjType = null;
@@ -1361,6 +1361,12 @@ public class OomAdjusterImpl extends OomAdjuster {
 
             } else if (app.getHasOverlayUi()) {
                 adjType = "has-overlay-ui";
+                newAdj = PERCEPTIBLE_APP_ADJ;
+                newProcState = PROCESS_STATE_IMPORTANT_FOREGROUND;
+            } else if (app.getHasInputConsumer()) {
+                // Same oom floor as overlay UI, but do not set mHasOverlayUi. That flag
+                // also allows background FGS starts for SYSTEM_ALERT_WINDOW.
+                adjType = "input-consumer";
                 newAdj = PERCEPTIBLE_APP_ADJ;
                 newProcState = PROCESS_STATE_IMPORTANT_FOREGROUND;
             }

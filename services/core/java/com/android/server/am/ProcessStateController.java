@@ -519,6 +519,19 @@ public class ProcessStateController {
         return true;
     }
 
+    /**
+     * Note whether a process owns an input channel that InputDispatcher may block on.
+     *
+     * @return true if the state changed, otherwise returns false.
+     */
+    @GuardedBy("mLock")
+    public boolean setHasInputConsumer(@NonNull ProcessRecordInternal proc,
+            boolean hasInputConsumer) {
+        if (proc.getHasInputConsumer() == hasInputConsumer) return false;
+        proc.setHasInputConsumer(hasInputConsumer);
+        return true;
+    }
+
 
     /**
      * Note whether a process is running a remote animation.

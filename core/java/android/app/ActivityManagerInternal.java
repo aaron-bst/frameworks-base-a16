@@ -284,6 +284,16 @@ public abstract class ActivityManagerInternal {
     public abstract void setHasOverlayUi(int pid, boolean hasOverlayUi);
 
     /**
+     * Sets whether the given pid owns an input channel that InputDispatcher may block on,
+     * such as a {@link android.view.WindowManager.LayoutParams#TYPE_SCREENSHOT} window.
+     * Unlike {@link #setHasOverlayUi}, this does not grant overlay-ui privileges.
+     *
+     * @param pid The pid whose input-consumer state is changing.
+     * @param hasInputConsumer True while such a channel is live.
+     */
+    public abstract void setHasInputConsumer(int pid, boolean hasInputConsumer);
+
+    /**
      * Called after the network policy rules are updated by
      * {@link com.android.server.net.NetworkPolicyManagerService} for a specific {@param uid} and
      * {@param procStateSeq}.

@@ -17050,6 +17050,27 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
 
         /**
+         * Sets whether the given pid owns an input channel InputDispatcher may block on.
+         * A change cancels a pending freeze via {@code OOM_ADJ_REASON_UI_VISIBILITY}.
+         */
+        @Override
+        public void setHasInputConsumer(int pid, boolean hasInputConsumer) {
+            synchronized (ActivityManagerService.this) {
+                final ProcessRecord pr;
+                synchronized (mPidsSelfLocked) {
+                    pr = mPidsSelfLocked.get(pid);
+                    if (pr == null) {
+                        Slog.w(TAG, "setHasInputConsumer called on unknown pid: " + pid);
+                        return;
+                    }
+                }
+                if (mProcessStateController.setHasInputConsumer(pr, hasInputConsumer)) {
+                    mProcessStateController.runUpdate(pr, OOM_ADJ_REASON_UI_VISIBILITY);
+                }
+            }
+        }
+
+        /**
          * Called after the network policy rules are updated by
          * {@link com.android.server.net.NetworkPolicyManagerService} for a specific {@param uid}
          * and {@param procStateSeq}.
