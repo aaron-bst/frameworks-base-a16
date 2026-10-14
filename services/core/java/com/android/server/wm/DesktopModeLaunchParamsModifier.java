@@ -113,7 +113,8 @@ class DesktopModeLaunchParamsModifier implements LaunchParamsModifier {
                 || suggestedDisplayArea.getTopMostVisibleFreeformActivity() != null;
         if (ENABLE_FREEFORM_DISPLAY_LAUNCH_PARAMS.isTrue() && task == null
                 && (isRequestingFreeformWindowMode(null, options, currentParams)
-                || inDesktopMode)) {
+                || inDesktopMode
+                || hasLaunchBoundsRequest(options))) {
             if (DesktopExperienceFlags.HANDLE_INCOMPATIBLE_TASKS_IN_DESKTOP_LAUNCH_PARAMS.isTrue()
                     && activity != null) {
                 if (mDesktopModeCompatPolicy.isTopActivityExemptFromDesktopWindowing(
@@ -127,10 +128,15 @@ class DesktopModeLaunchParamsModifier implements LaunchParamsModifier {
             }
             if (options != null) {
                 final int windowingMode = options.getLaunchWindowingMode();
-                if (windowingMode == WINDOWING_MODE_FREEFORM) {
+                if (windowingMode == WINDOWING_MODE_FREEFORM
+                        || hasLaunchBoundsRequest(options)) {
                     // Launching freeform in desktop but not ready to resolve bounds since task is
                     // null, return RESULT_DONE to prevent other modifiers from setting bounds.
-                    outParams.mWindowingMode = windowingMode;
+                    // A launch-bounds rect is a freeform request too, even when it still
+                    // overflows stable insets. updateInitialBounds clamps it once the task
+                    // exists. Launchers that only set bounds (public API) get the same
+                    // treatment as those that also set the windowing mode option (hidden API).
+                    outParams.mWindowingMode = WINDOWING_MODE_FREEFORM;
                     appendLog("launch-freeform");
                     return RESULT_DONE;
                 }
@@ -327,6 +333,21 @@ class DesktopModeLaunchParamsModifier implements LaunchParamsModifier {
         DesktopModeBoundsCalculator.updateInitialBounds(task, layout, targetActivity, options,
                 display, outParams, this::appendLog);
         appendLog("final desktop mode task bounds set to %s", outParams.mBounds);
+        if (options != null
+                && !outParams.mBounds.isEmpty()
+                && (options.getLaunchWindowingMode() == WINDOWING_MODE_FREEFORM
+                        || hasLaunchBoundsRequest(options))) {
+            // Taskbar asked for a freeform rect (explicit windowing mode, or a launch-bounds
+            // rect). updateInitialBounds already shrank an overflowing rect into stable, so
+            // the check is on the clamped result, not on the raw rect fitting stable.
+            // 1600x900 density 2 turns a 1000x640 dp design into a full-height window that
+            // sticks out of the status bar / taskbar; requiring the raw rect to be inside
+            // stable dropped it and left the task fullscreen. Returning DONE stops
+            // TaskLaunchParamsModifier from dropping the rect until Shell shrinks it.
+            outParams.mWindowingMode = WINDOWING_MODE_FREEFORM;
+            appendLog("freeform-from-options");
+            return RESULT_DONE;
+        }
         if (options != null && options.getFlexibleLaunchSize()) {
             // Return result done to prevent other modifiers from respecting option bounds and
             // applying further cascading. Since other modifiers are being skipped in this case,
@@ -391,6 +412,7 @@ class DesktopModeLaunchParamsModifier implements LaunchParamsModifier {
             @NonNull LaunchParamsController.LaunchParams currentParams) {
         return (task != null && task.inFreeformWindowingMode())
                 || (options != null && options.getLaunchWindowingMode() == WINDOWING_MODE_FREEFORM)
+                || hasLaunchBoundsRequest(options)
                 || (currentParams.mWindowingMode == WINDOWING_MODE_FREEFORM
                 && !DesktopExperienceFlags.IGNORE_CURRENT_PARAMS_IN_DESKTOP_LAUNCH_PARAMS.isTrue());
     }
@@ -505,6 +527,23 @@ class DesktopModeLaunchParamsModifier implements LaunchParamsModifier {
         final Rect displayStableBounds = new Rect();
         displayContent.getStableRect(displayStableBounds);
         return displayStableBounds.contains(taskBounds);
+    }
+
+    /**
+     * True when options carry a non-empty {@link ActivityOptions#getLaunchBounds()} and do not
+     * ask for a non-freeform windowing mode. Launchers without the hidden
+     * {@code setLaunchWindowingMode} API express a freeform request via launch bounds alone.
+     * The rect may overflow stable insets; {@link DesktopModeBoundsCalculator#updateInitialBounds}
+     * clamps it. A fullscreen / pinned / multi-window option is left alone.
+     */
+    private boolean hasLaunchBoundsRequest(@Nullable ActivityOptions options) {
+        if (options == null) return false;
+        final int mode = options.getLaunchWindowingMode();
+        if (mode != WINDOWING_MODE_UNDEFINED && mode != WINDOWING_MODE_FREEFORM) {
+            return false;
+        }
+        final Rect launchBounds = options.getLaunchBounds();
+        return launchBounds != null && !launchBounds.isEmpty();
     }
 
     /**
