@@ -634,6 +634,12 @@ class DesktopTasksController(
         // At this point the recents transition is either finishing to home, to another non-desktop
         // task or to a different desk than the one that was active when recents started. For all
         // of those the desk that was active needs to be deactivated.
+        minimizeDeskTasksForHome(
+            wct = finishWct,
+            deskId = activeDeskIdOnRecentsStart,
+            displayId = DEFAULT_DISPLAY,
+            userId = userId,
+        )
         val runOnTransitStart =
             performDesktopExitCleanUp(
                 wct = finishWct,
@@ -3997,6 +4003,14 @@ class DesktopTasksController(
         val repository = userRepositories.getProfile(task.userId)
         val activeDeskId = repository.getActiveDeskId(task.displayId) ?: return null
         val wct = WindowContainerTransaction()
+        // BS-A16: the recents screen is a home-type task too; opening it must not minimize the
+        // desktop windows (they come back when recents is dismissed back to the desktop).
+        val recentsPkg =
+            context.getString(com.android.internal.R.string.config_recentsComponentName)
+                .substringBefore('/')
+        if (task.baseActivity?.packageName != recentsPkg) {
+            minimizeDeskTasksForHome(wct, activeDeskId, task.displayId, task.userId)
+        }
         // TODO: b/393978539 - desktop-first displays may need to keep the desk active.
         // TODO: b/415381304 - pass in the correct |userId| to |performDesktopExitCleanUp| to
         //  ensure desk deactivation updates are applied to the right repository.
@@ -4015,6 +4029,30 @@ class DesktopTasksController(
             )
         runOnTransitStart?.invoke(transition)
         return wct
+    }
+
+    /**
+     * BS-A16: home (or recents) is about to cover the desktop. Minimize the desk's expanded tasks
+     * so a later app launch activates the desk with only that app above home. The minimized tasks
+     * stay hidden behind home (the desk's minimization root sits below the home task) instead of
+     * popping back up behind the next launched window. Clicking any of them later unminimizes it
+     * normally. The repository is updated here because the limiter's own minimize bookkeeping
+     * requires the desk to still be active, which is no longer true once the desk is deactivated.
+     */
+    private fun minimizeDeskTasksForHome(
+        wct: WindowContainerTransaction,
+        deskId: Int,
+        displayId: Int,
+        userId: Int,
+    ) {
+        val repository = userRepositories.getProfile(userId)
+        repository.getExpandedTasksIdsInDeskOrdered(deskId = deskId).forEach { taskId ->
+            shellTaskOrganizer.getRunningTaskInfo(taskId)?.let { taskInfo ->
+                logV("home: minimizing task #%d in desk #%d", taskId, deskId)
+                desksOrganizer.minimizeTask(wct, deskId, taskInfo)
+                repository.minimizeTaskInDesk(displayId, deskId, taskId)
+            }
+        }
     }
 
     /**
