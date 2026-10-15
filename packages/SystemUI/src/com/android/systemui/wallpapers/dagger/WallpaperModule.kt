@@ -30,7 +30,6 @@ import com.android.systemui.wallpapers.ui.presentation.KeyguardWallpaperPresenta
 import com.android.systemui.wallpapers.ui.presentation.ProvisioningWallpaperPresentationFactory
 import com.android.systemui.wallpapers.ui.presentation.WallpaperPresentationFactory
 import com.android.systemui.wallpapers.ui.presentation.WallpaperPresentationTypeKey
-import com.android.window.flags.Flags
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -83,7 +82,6 @@ interface WallpaperModule {
 
         @Provides
         @WallpaperPresentationEnabled
-        fun providesWallpaperPresentationEnabled(): Boolean =
-            Flags.enableConnectedDisplaysWallpaperPresentations()
+        fun providesWallpaperPresentationEnabled(): Boolean = false
     }
 }

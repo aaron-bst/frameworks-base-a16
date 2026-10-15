@@ -108,6 +108,7 @@ public class KeyguardSliceProviderTest extends SysuiTestCase {
         mProvider = new TestableKeyguardSliceProvider();
         mProvider.setContextAvailableCallback(context -> new SystemUIInitializerImpl(mContext));
         mProvider.attachInfo(getContext(), null);
+        mProvider.onBindSlice(mProvider.getUri());
         reset(mContentResolver);
         SliceProvider.setSpecs(new HashSet<>(Arrays.asList(SliceSpecs.LIST)));
         when(mUserTracker.getUserId()).thenReturn(100);
@@ -285,10 +286,8 @@ public class KeyguardSliceProviderTest extends SysuiTestCase {
         }
 
         @Override
-        public boolean onCreateSliceProvider() {
-            boolean result = super.onCreateSliceProvider();
+        protected void onMediaWakeLockCreated() {
             mMediaWakeLock = KeyguardSliceProviderTest.this.mMediaWakeLock;
-            return result;
         }
 
         Uri getUri() {

@@ -18,9 +18,7 @@ package com.android.systemui.people;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
-import android.content.Context;
 import android.content.pm.PackageManager;
-import android.content.pm.ProviderInfo;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Binder;
@@ -42,6 +40,7 @@ public class PeopleProvider extends ContentProvider implements ContentProviderCo
     private static final boolean DEBUG = PeopleSpaceUtils.DEBUG;
     private static final String EMPTY_STRING = "";
     private ContentProviderContextAvailableCallback mCallback;
+    private volatile boolean mInjected;
 
     @Inject
     PeopleSpaceWidgetManager mPeopleSpaceWidgetManager;
@@ -83,6 +82,7 @@ public class PeopleProvider extends ContentProvider implements ContentProviderCo
             throw new IllegalArgumentException("Null user handle");
         }
 
+        ensureInjected();
         if (mPeopleSpaceWidgetManager == null) {
             Log.e(TAG, "Could not initialize people widget manager");
             return null;
@@ -137,13 +137,22 @@ public class PeopleProvider extends ContentProvider implements ContentProviderCo
     }
 
     @Override
-    public void attachInfo(Context context, ProviderInfo info) {
-        mCallback.onContextAvailable(context);
-        super.attachInfo(context, info);
-    }
-
-    @Override
     public void setContextAvailableCallback(ContentProviderContextAvailableCallback callback) {
         mCallback = callback;
+    }
+
+    private void ensureInjected() {
+        if (mInjected) {
+            return;
+        }
+        synchronized (this) {
+            if (mInjected) {
+                return;
+            }
+            if (mPeopleSpaceWidgetManager == null && mCallback != null) {
+                mCallback.onContextAvailable(getContext());
+            }
+            mInjected = mPeopleSpaceWidgetManager != null;
+        }
     }
 }

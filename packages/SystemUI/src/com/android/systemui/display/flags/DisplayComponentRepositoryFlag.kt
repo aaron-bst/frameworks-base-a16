@@ -16,14 +16,13 @@
 
 package com.android.systemui.display.flags
 
-import com.android.window.flags.Flags
-
 /** Flags related to [com.android.systemui.display.data.repository.DisplayComponentRepository]. */
 object DisplayComponentRepositoryFlag {
     /**
-     * Returns true if eager initialization should be enabled for
-     * [com.android.systemui.display.data.repository.DisplayComponentRepository].
+     * Eager display-component init calls [com.android.app.displaylib.PerDisplayRepository.get]
+     * from a background coroutine during startup and races the main-thread graph build.
+     * Connected-display wallpaper presentations are unused on this player, so keep it off
+     * here instead of flipping the platform release flag.
      */
-    fun isEagerInitializationEnabled(): Boolean =
-        Flags.enableConnectedDisplaysWallpaperPresentations()
+    fun isEagerInitializationEnabled(): Boolean = false
 }

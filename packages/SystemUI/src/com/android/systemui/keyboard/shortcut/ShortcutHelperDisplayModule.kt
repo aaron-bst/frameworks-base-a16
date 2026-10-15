@@ -57,10 +57,27 @@ interface ShortcutHelperDisplayModule {
             @DisplayAware implLazy: Lazy<ShortcutHelperDialogStarter>,
             @DisplayAware displayId: Int,
         ): SystemUIDisplaySubcomponent.LifecycleListener {
+            // Reading lifecycleListeners materializes this provider inside
+            // PerDisplayRepository.setupInstance. Resolving the starter here pulls
+            // SystemUIDialogFactory and KeyguardDisplayManager while that get() is in progress.
             return if (
                 displayId == Display.DEFAULT_DISPLAY || Flags.shortcutHelperMultiDisplaySupport()
             ) {
-                implLazy.get()
+                object : SystemUIDisplaySubcomponent.LifecycleListener {
+                    private var started = false
+
+                    override fun start() {
+                        val starter = implLazy.get()
+                        started = true
+                        starter.start()
+                    }
+
+                    override fun stop() {
+                        if (started) {
+                            implLazy.get().stop()
+                        }
+                    }
+                }
             } else {
                 SystemUIDisplaySubcomponent.LifecycleListener.NOP
             }

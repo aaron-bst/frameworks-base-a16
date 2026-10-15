@@ -42,6 +42,7 @@ import com.android.systemui.display.shared.model.DisplayRotation
 import com.android.systemui.display.shared.model.toRotation
 import com.android.systemui.keyguard.shared.model.DevicePosture
 import com.android.systemui.res.R
+import dagger.Lazy
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
@@ -96,7 +97,10 @@ constructor(
     @Background private val backgroundDispatcher: CoroutineDispatcher,
     private val faceManager: FaceManager?,
     private val cameraManager: CameraManager,
-    displayStateRepository: DisplayStateRepository,
+    // Resolved on first sensorLocation collection, after this singleton is published.
+    // BiometricsModule.displayStateRepository() calls PerDisplayRepository.get(); doing that
+    // while this provider is still unpublished builds a second FacePropertyRepositoryImpl.
+    private val displayStateRepository: Lazy<DisplayStateRepository>,
     configurationRepository: ConfigurationRepository,
 ) : FacePropertyRepository {
 
@@ -212,8 +216,8 @@ constructor(
                 } else {
                     combine(
                         defaultSensorLocation,
-                        displayStateRepository.currentRotation,
-                        displayStateRepository.currentDisplaySize,
+                        displayStateRepository.get().currentRotation,
+                        displayStateRepository.get().currentDisplaySize,
                         configurationRepository.scaleForResolution,
                     ) { defaultLocation, displayRotation, displaySize, scaleForResolution ->
                         computeCurrentFaceLocation(
