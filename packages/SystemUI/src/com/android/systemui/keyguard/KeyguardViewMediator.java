@@ -61,7 +61,6 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.UserInfo;
 import android.graphics.Matrix;
 import android.hardware.biometrics.BiometricSourceType;
@@ -1727,18 +1726,9 @@ public class KeyguardViewMediator implements CoreStartable,
 
         mAlarmManager = (AlarmManager) mContext.getSystemService(Context.ALARM_SERVICE);
 
-        // Assume keyguard is showing (unless it's disabled) until we know for sure, unless Keyguard
-        // is disabled.
-        if (isKeyguardServiceEnabled()) {
-            setShowingLocked(!shouldWaitForProvisioning()
-                    && !mLockPatternUtils.isLockScreenDisabled(
-                            mSelectedUserInteractor.getSelectedUserId()),
-                    true /* forceCallbacks */, "setupLocked - keyguard service enabled");
-        } else {
-            // The system's keyguard is disabled or missing.
-            setShowingLocked(false /* showing */, true /* forceCallbacks */,
-                    "setupLocked - keyguard service disabled");
-        }
+        // BS-A16: the player has no lock screen. Do not assume keyguard is showing at startup.
+        setShowingLocked(false /* showing */, true /* forceCallbacks */,
+                "setupLocked - BS-A16 lock screen disabled");
 
         mKeyguardTransitions.register(
                 KeyguardService.wrap(this, getExitAnimationRunner()),
@@ -2009,15 +1999,6 @@ public class KeyguardViewMediator implements CoreStartable,
 
             doKeyguardLocked(null);
             setPendingLock(false);
-        }
-    }
-
-    private boolean isKeyguardServiceEnabled() {
-        try {
-            return mContext.getPackageManager().getServiceInfo(
-                    new ComponentName(mContext, KeyguardService.class), 0).isEnabled();
-        } catch (NameNotFoundException e) {
-            return true;
         }
     }
 
@@ -2436,13 +2417,8 @@ public class KeyguardViewMediator implements CoreStartable,
      * This must be safe to call from any thread and with any window manager locks held.
      */
     public void showDismissibleKeyguard() {
-        if (!mUpdateMonitor.isDeviceProvisioned()) {
-            Log.d(TAG, "Device not provisioned, so ignore request to show keyguard.");
-            return;
-        }
-        Bundle showKeyguardUnlocked = new Bundle();
-        showKeyguardUnlocked.putBoolean(OPTION_SHOW_DISMISSIBLE, true);
-        showKeyguard(showKeyguardUnlocked);
+        // BS-A16: the player has no lock screen.
+        Log.d(TAG, "showDismissibleKeyguard: skipping, lock screen is disabled");
     }
 
     /**
@@ -2491,113 +2467,9 @@ public class KeyguardViewMediator implements CoreStartable,
      * Enable the keyguard if the settings are appropriate.
      */
     private void doKeyguardLocked(Bundle options, boolean resetState) {
-        // If the power button behavior requests to open the glanceable hub.
-        if (options != null && options.getBoolean(EXTRA_TRIGGER_HUB)) {
-            if (mCommunalSettingsInteractor.get().getAutoOpenEnabled().getValue()) {
-                // Set the hub to show immediately when the SysUI window shows, then continue to
-                // lock the device.
-                mCommunalSceneInteractor.get().showHubFromPowerButton();
-            } else {
-                // If the hub is not available, go to sleep instead of locking. This can happen
-                // because the power button behavior does not check all possible reasons the hub
-                // might be disabled.
-                mPM.goToSleep(android.os.SystemClock.uptimeMillis(),
-                        PowerManager.GO_TO_SLEEP_REASON_POWER_BUTTON, 0);
-                return;
-            }
-        }
-
-        int currentUserId = mSelectedUserInteractor.getSelectedUserId();
-        if (options != null && options.getBinder(LOCK_ON_USER_SWITCH_CALLBACK) != null) {
-            LockNowCallback callback = new LockNowCallback(currentUserId,
-                    IRemoteCallback.Stub.asInterface(
-                            options.getBinder(LOCK_ON_USER_SWITCH_CALLBACK)));
-            synchronized (mLockNowCallbacks) {
-                mLockNowCallbacks.add(callback);
-            }
-            Log.d(TAG, "LockNowCallback required for user: " + callback.mUserId);
-        }
-
-        // if another app is disabling us, don't show
-        if (!mExternallyEnabled
-                && !mUpdateMonitor.isUserInLockdown(
-                        mSelectedUserInteractor.getSelectedUserId())) {
-            if (DEBUG) Log.d(TAG, "doKeyguard: not showing because externally disabled");
-            notifyLockNowCallback();
-            mNeedToReshowWhenReenabled = true;
-            return;
-        }
-
-        // If the keyguard is already showing, see if we don't need to bother re-showing it. Check
-        // flags in both files to account for the hiding animation which results in a delay and
-        // discrepancy between flags. If we're in the middle of hiding, do not short circuit so that
-        // we explicitly re-set state.
-        if (mShowing && mKeyguardStateController.isShowing()) {
-            if (mPM.isInteractive() && !mHiding) {
-                if (mKeyguardStateController.isKeyguardGoingAway()) {
-                    Log.e(TAG, "doKeyguard: we're still showing, but going away. Re-show the "
-                            + "keyguard rather than short-circuiting and resetting.");
-                } else {
-                    // We're removing "reset" in the refactor - "resetting" the views will happen
-                    // as a reaction to the root cause of the "reset" signal.
-                    if (KeyguardWmStateRefactor.isEnabled()) {
-                        notifyLockNowCallback();
-                        return;
-                    }
-
-                    // It's already showing, and we're not trying to show it while the screen is
-                    // off. We can simply reset all of the views, but don't hide the bouncer in case
-                    // the user is currently interacting with it.
-                    if (DEBUG) Log.d(TAG,
-                            "doKeyguard: not showing (instead, resetting) because it is "
-                                    + "already showing, we're interactive, we were not "
-                                    + "previously hiding. It should be safe to short-circuit "
-                                    + "here.");
-                    if (resetState) {
-                        resetStateLocked(/* hideBouncer= */ false);
-                    }
-                    notifyLockNowCallback();
-                    return;
-                }
-            } else {
-                // We are trying to show the keyguard while the screen is off or while we were in
-                // the middle of hiding - this results from race conditions involving locking while
-                // unlocking. Don't short-circuit here and ensure the keyguard is fully re-shown.
-                Log.e(TAG,
-                        "doKeyguard: already showing, but re-showing because we're interactive or "
-                                + "were in the middle of hiding.");
-                notifyLockNowCallback();
-            }
-        }
-
-        // if the setup wizard hasn't run yet, don't show
-        final boolean requireSim = !SystemProperties.getBoolean("keyguard.no_require_sim", false);
-        final boolean absent = SubscriptionManager.isValidSubscriptionId(
-                mUpdateMonitor.getNextSubIdForState(TelephonyManager.SIM_STATE_ABSENT));
-        final boolean disabled = SubscriptionManager.isValidSubscriptionId(
-                mUpdateMonitor.getNextSubIdForState(TelephonyManager.SIM_STATE_PERM_DISABLED));
-        final boolean lockedOrMissing = mUpdateMonitor.isSimPinSecure()
-                || ((absent || disabled) && requireSim);
-
-        if (!lockedOrMissing && shouldWaitForProvisioning()) {
-            if (DEBUG) {
-                Log.d(TAG, "doKeyguard: not showing because device isn't provisioned and the sim is"
-                        + " not locked or missing");
-            }
-            notifyLockNowCallback();
-            return;
-        }
-
-        boolean forceShow = options != null && options.getBoolean(OPTION_FORCE_SHOW, false);
-        if (mLockPatternUtils.isLockScreenDisabled(mSelectedUserInteractor.getSelectedUserId())
-                && !lockedOrMissing && !forceShow) {
-            if (DEBUG) Log.d(TAG, "doKeyguard: not showing because lockscreen is off");
-            notifyLockNowCallback();
-            return;
-        }
-
-        if (DEBUG) Log.d(TAG, "doKeyguard: showing the lock screen");
-        showKeyguard(options);
+        // BS-A16: the player has no lock screen. Never show or re-show keyguard.
+        Log.d(TAG, "doKeyguard: skipping, lock screen is disabled");
+        notifyLockNowCallback();
     }
 
     @SuppressLint("MissingPermission")
@@ -2682,17 +2554,8 @@ public class KeyguardViewMediator implements CoreStartable,
      * @see #handleShow
      */
     private void showKeyguard(Bundle options) {
-        Trace.beginSection("KeyguardViewMediator#showKeyguard acquiring mShowKeyguardWakeLock");
-        if (DEBUG) Log.d(TAG, "showKeyguard");
-        // ensure we stay awake until we are finished displaying the keyguard
-        mShowKeyguardWakeLock.acquire();
-        mLastShowRequest++;
-        Message msg = mHandler.obtainMessage(SHOW, options);
-        // Treat these messages with priority - This call can originate from #doKeyguardTimeout,
-        // meaning the device may lock, so it shouldn't wait for other messages on the thread to
-        // process first.
-        mHandler.sendMessageAtFrontOfQueue(msg);
-        Trace.endSection();
+        // BS-A16: the player has no lock screen.
+        Log.d(TAG, "showKeyguard: skipping, lock screen is disabled");
     }
 
     /**

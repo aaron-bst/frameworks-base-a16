@@ -60,7 +60,6 @@ import com.android.systemui.deviceentry.shared.model.FaceAuthenticationStatus
 import com.android.systemui.deviceentry.shared.model.FaceDetectionStatus
 import com.android.systemui.deviceentry.shared.model.SuccessFaceAuthenticationStatus
 import com.android.systemui.display.data.repository.displayRepository
-import com.android.systemui.display.domain.interactor.displayStateInteractor
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.flags.DisableSceneContainer
 import com.android.systemui.flags.EnableSceneContainer
@@ -173,7 +172,6 @@ class DeviceEntryFaceAuthRepositoryTest : SysuiTestCase() {
     private val powerInteractor by lazy { kosmos.powerInteractor }
     private val keyguardInteractor by lazy { kosmos.keyguardInteractor }
     private val alternateBouncerInteractor by lazy { kosmos.alternateBouncerInteractor }
-    private val displayStateInteractor by lazy { kosmos.displayStateInteractor }
     private val bouncerRepository by lazy { kosmos.fakeKeyguardBouncerRepository }
     private val displayRepository by lazy { kosmos.displayRepository }
     private val keyguardTransitionInteractor by lazy { kosmos.keyguardTransitionInteractor }
@@ -230,7 +228,7 @@ class DeviceEntryFaceAuthRepositoryTest : SysuiTestCase() {
             faceDetectBuffer,
             faceAuthBuffer,
             keyguardTransitionInteractor,
-            displayStateInteractor,
+            displayRepository,
             dumpManager,
         )
     }
