@@ -106,6 +106,7 @@ public class KeyguardSliceProvider extends SliceProvider implements
 
     private static final Object sInstanceLock = new Object();
     private static KeyguardSliceProvider sInstance;
+    private volatile boolean mStarted;
 
     protected final Uri mSliceUri;
     protected final Uri mHeaderUri;
@@ -214,6 +215,9 @@ public class KeyguardSliceProvider extends SliceProvider implements
     @AnyThread
     @Override
     public Slice onBindSlice(Uri sliceUri) {
+        if (!ensureStarted()) {
+            return null;
+        }
         Slice slice = null;
         try {
             Trace.beginSection("KeyguardSliceProvider#onBindSlice");
@@ -319,37 +323,64 @@ public class KeyguardSliceProvider extends SliceProvider implements
 
     @Override
     public boolean onCreateSliceProvider() {
-        mContextAvailableCallback.onContextAvailable(getContext());
-        if (mMediaManager == null) {
-            Log.e(TAG, "Dagger injection failed, cannot start. See any above warnings with string: "
-                    + "\"No injector for class\"");
-            return false;
-        }
-        mMediaWakeLock = new SettableWakeLock(
-                WakeLock.createPartial(getContext(), mWakeLockLogger, "media"), "media");
-        synchronized (KeyguardSliceProvider.sInstanceLock) {
-            KeyguardSliceProvider oldInstance = KeyguardSliceProvider.sInstance;
-            if (oldInstance != null) {
-                oldInstance.onDestroy();
-            }
-            mDatePattern = getContext().getString(R.string.system_ui_aod_date_pattern);
-            mPendingIntent = PendingIntent.getActivity(getContext(), 0,
-                    new Intent(getContext(), KeyguardSliceProvider.class),
-                    PendingIntent.FLAG_IMMUTABLE);
-            mMediaManager.addCallback(this);
-            mStatusBarStateController.addCallback(this);
-            mNextAlarmController.addCallback(this);
-            mZenModeController.addCallback(this);
-            KeyguardSliceProvider.sInstance = this;
-            registerClockUpdate();
-            updateClockLocked();
-        }
+        // Injection and listener registration run on the first slice bind. Doing them here runs
+        // inside installContentProviders, on the bindApplication startup path.
         return true;
+    }
+
+    private boolean ensureStarted() {
+        if (mStarted) {
+            return true;
+        }
+        synchronized (this) {
+            if (mStarted) {
+                return true;
+            }
+            if (mContextAvailableCallback != null) {
+                mContextAvailableCallback.onContextAvailable(getContext());
+            }
+            if (mMediaManager == null) {
+                Log.e(TAG, "Dagger injection failed, cannot start. See any above warnings with "
+                        + "string: \"No injector for class\"");
+                return false;
+            }
+            mMediaWakeLock = new SettableWakeLock(
+                    WakeLock.createPartial(getContext(), mWakeLockLogger, "media"), "media");
+            onMediaWakeLockCreated();
+            synchronized (KeyguardSliceProvider.sInstanceLock) {
+                KeyguardSliceProvider oldInstance = KeyguardSliceProvider.sInstance;
+                if (oldInstance != null) {
+                    oldInstance.onDestroy();
+                }
+                mDatePattern = getContext().getString(R.string.system_ui_aod_date_pattern);
+                mPendingIntent = PendingIntent.getActivity(getContext(), 0,
+                        new Intent(getContext(), KeyguardSliceProvider.class),
+                        PendingIntent.FLAG_IMMUTABLE);
+                mMediaManager.addCallback(this);
+                mStatusBarStateController.addCallback(this);
+                mNextAlarmController.addCallback(this);
+                mZenModeController.addCallback(this);
+                KeyguardSliceProvider.sInstance = this;
+                registerClockUpdate();
+                updateClockLocked();
+            }
+            mStarted = true;
+            return true;
+        }
+    }
+
+    @VisibleForTesting
+    protected void onMediaWakeLockCreated() {
     }
 
     @VisibleForTesting
     protected void onDestroy() {
         synchronized (KeyguardSliceProvider.sInstanceLock) {
+            if (!mStarted) {
+                KeyguardSliceProvider.sInstance = null;
+                return;
+            }
+            mStarted = false;
             mNextAlarmController.removeCallback(this);
             mZenModeController.removeCallback(this);
             mMediaWakeLock.setAcquired(false);

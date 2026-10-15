@@ -37,6 +37,7 @@ import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.res.R
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
+import dagger.Lazy
 import java.util.concurrent.Executor
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
@@ -106,7 +107,7 @@ class FacePropertyRepositoryImplTest : SysuiTestCase() {
             dispatcher,
             manager,
             cameraManager,
-            displayStateRepository,
+            Lazy { displayStateRepository },
             configurationRepository,
         )
 

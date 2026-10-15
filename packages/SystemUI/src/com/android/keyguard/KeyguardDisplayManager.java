@@ -132,8 +132,14 @@ public class KeyguardDisplayManager {
         mConnectedDisplayKeyguardPresentationFactory = connectedDisplayKeyguardPresentationFactory;
         mIsCentralizedWallpaperPresentationEnabled = isCentralizedWallpaperPresentationEnabled;
         if (ShadeWindowGoesAround.isEnabled()) {
-            collectFlow(appScope, shadePositionRepositoryProvider.get().getDisplayId(),
-                    (id) -> onShadeWindowMovedToDisplayId(id));
+            // provider.get() builds ShadeDisplaysRepository, which enters
+            // PerDisplayRepository.get() → setupInstance. Doing that here re-enters Dagger
+            // while this singleton is still unpublished, and setupInstance may construct
+            // another KeyguardDisplayManager via the dialog graph.
+            // Handler-backed @Main posts, so this runs after the constructor publishes the instance.
+            mainExecutor.execute(() -> collectFlow(appScope,
+                    mShadePositionRepositoryProvider.get().getDisplayId(),
+                    this::onShadeWindowMovedToDisplayId));
         }
     }
 

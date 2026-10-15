@@ -105,6 +105,8 @@ abstract class SystemUIAppComponentFactoryBase : AppComponentFactory() {
     override fun instantiateProviderCompat(cl: ClassLoader, className: String): ContentProvider {
         val contentProvider = super.instantiateProviderCompat(cl, className)
         if (contentProvider is ContentProviderContextInitializer) {
+            // Providers must call this on first use, not from attachInfo. installContentProviders
+            // runs before Application.onCreate and is inside the bindApplication startup budget.
             contentProvider.setContextAvailableCallback { context ->
                 val initializer = createSystemUIInitializerInternal(context)
                 val rootComponent = initializer.sysUIComponent
@@ -119,7 +121,6 @@ abstract class SystemUIAppComponentFactoryBase : AppComponentFactory() {
                 } catch (e: InvocationTargetException) {
                     Log.w(TAG, "No injector for class: " + contentProvider.javaClass, e)
                 }
-                initializer
             }
         }
         return contentProvider
