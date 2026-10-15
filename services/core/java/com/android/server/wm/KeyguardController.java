@@ -182,6 +182,13 @@ class KeyguardController {
      * Update the Keyguard showing state.
      */
     void setKeyguardShown(int displayId, boolean keyguardShowing, boolean aodShowing) {
+        // BS-A16: the player has no lock screen. A true report, including the one
+        // KeyguardServiceDelegate sends when SystemUI disconnects, must not stick.
+        if (keyguardShowing || aodShowing) {
+            Slog.i(TAG, "setKeyguardShown ignoring lock screen on display " + displayId);
+            keyguardShowing = false;
+            aodShowing = false;
+        }
         final DisplayContent dc = mRootWindowContainer.getDisplayContent(displayId);
 
         if (dc == null) {

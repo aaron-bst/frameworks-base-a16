@@ -1946,6 +1946,15 @@ class DesktopRepositoryTest(flags: FlagsParameterization) : ShellTestCase() {
     }
 
     @Test
+    @EnableFlags(Flags.FLAG_ENABLE_MULTIPLE_DESKTOPS_BACKEND)
+    fun addTask_multipleDesks_deskDoesNotExist_skipsWithoutThrowing() {
+        repo.addTask(displayId = 999, taskId = 6, isVisible = true, taskBounds = TEST_TASK_BOUNDS)
+
+        assertThat(repo.isActiveTask(6)).isFalse()
+        assertThat(repo.getDefaultDeskId(999)).isNull()
+    }
+
+    @Test
     @DisableFlags(Flags.FLAG_ENABLE_MULTIPLE_DESKTOPS_BACKEND)
     fun getDisplayForDesk() {
         repo.addDesk(SECOND_DISPLAY, SECOND_DISPLAY)

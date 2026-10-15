@@ -38,7 +38,7 @@ import com.android.systemui.deviceentry.shared.model.FaceDetectionStatus
 import com.android.systemui.deviceentry.shared.model.FailedFaceAuthenticationStatus
 import com.android.systemui.deviceentry.shared.model.HelpFaceAuthenticationStatus
 import com.android.systemui.deviceentry.shared.model.SuccessFaceAuthenticationStatus
-import com.android.systemui.display.domain.interactor.DisplayStateInteractor
+import com.android.systemui.display.data.repository.DisplayRepository
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.keyguard.data.repository.BiometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.BiometricType
@@ -170,7 +170,10 @@ constructor(
     @FaceDetectTableLog private val faceDetectLog: TableLogBuffer,
     @FaceAuthTableLog private val faceAuthLog: TableLogBuffer,
     private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
-    private val displayStateInteractor: DisplayStateInteractor,
+    // DisplayStateInteractor's global binding calls PerDisplayRepository.get(). Doing that
+    // while this singleton is still unpublished builds a second instance, which then fails
+    // DumpManager.registerCriticalDumpable. isDefaultDisplayOff is DisplayRepository's own flow.
+    private val displayRepository: DisplayRepository,
     dumpManager: DumpManager,
 ) : DeviceEntryFaceAuthRepository, Dumpable {
     private var authCancellationSignal: CancellationSignal? = null
@@ -395,7 +398,7 @@ constructor(
         return arrayOf(
             Pair(
                 combine(
-                    displayStateInteractor.isDefaultDisplayOff,
+                    displayRepository.defaultDisplayOff,
                     keyguardTransitionInteractor.isFinishedInStateWhere(
                         KeyguardState::deviceIsAwakeInState
                     ),

@@ -503,10 +503,18 @@ class DesktopRepository(
             isVisible,
             taskBounds,
         )
-        val activeDesk =
-            checkNotNull(desktopData.getDefaultDesk(displayId)) {
-                "Expected desk in display: $displayId"
-            }
+        // Multi-desk mode does not create a desk here. A locked keyguard skips desk creation
+        // in DesktopTasksController, but the task can still open as freeform. Throwing from
+        // this bookkeeping path is uncaught on the shell main thread and kills SystemUI.
+        val activeDesk = desktopData.getDefaultDesk(displayId)
+        if (activeDesk == null) {
+            logW(
+                "addTask: no desk in displayId=%d for taskId=%d, skipping",
+                displayId,
+                taskId,
+            )
+            return
+        }
         addTaskToDesk(
             displayId = displayId,
             deskId = activeDesk.deskId,
